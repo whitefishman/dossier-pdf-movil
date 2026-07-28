@@ -1,0 +1,14 @@
+{
+  "name": "Dossier PDF",
+  "short_name": "Dossier",
+  "description": "Lee tus documentos PDF página a página.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f1e8",
+  "theme_color": "#f5f1e8",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
