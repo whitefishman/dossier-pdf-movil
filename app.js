@@ -22,6 +22,10 @@ const elements = {
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
   selectedCount: document.querySelector("#selected-count"),
+  downloadSelected: document.querySelector("#download-selected"),
+  exportProgress: document.querySelector("#export-progress"),
+  exportProgressBar: document.querySelector("#export-progress-bar"),
+  exportProgressText: document.querySelector("#export-progress-text"),
   diagnosticName: document.querySelector("#diagnostic-name"),
   diagnosticSize: document.querySelector("#diagnostic-size"),
   diagnosticType: document.querySelector("#diagnostic-type"),
@@ -44,6 +48,8 @@ let touchStartX = 0;
 let touchStartY = 0;
 let selectedPages = new Set();
 let fileLoadSequence = 0;
+let documentBaseName = "documento";
+let isExporting = false;
 
 async function loadPdfJs() {
   if (pdfjsLib) {
@@ -104,6 +110,8 @@ async function openPdf(file) {
     elements.diagnosticPages.textContent = String(pdfDocument.numPages);
     currentPage = 1;
     selectedPages = new Set();
+    documentBaseName = getSafeFileName(file.name);
+    elements.exportProgress.hidden = true;
     updateSelectionCount();
     elements.total.textContent = pdfDocument.numPages;
     await renderPage();
@@ -120,6 +128,11 @@ function reportDiagnosticError(error) {
   const name = error?.name || "Error";
   const message = error?.message || String(error);
   elements.diagnosticError.textContent = error?.stack || `${name}: ${message}`;
+}
+
+function getSafeFileName(fileName) {
+  const withoutExtension = fileName.replace(/\.pdf$/i, "");
+  return withoutExtension.replace(/[\\/:*?"<>|]+/g, "-").trim() || "documento";
 }
 
 function validatePdfFile(file) {
@@ -213,6 +226,9 @@ function selectAndContinue() {
 
 function updateSelectionCount() {
   elements.selectedCount.textContent = selectedPages.size;
+  const count = selectedPages.size;
+  elements.downloadSelected.textContent = `Descargar ${count} ${count === 1 ? "página" : "páginas"} como JPG`;
+  elements.downloadSelected.disabled = isExporting || !pdfDocument || count === 0;
 }
 
 function updateSelectedState() {
@@ -231,8 +247,100 @@ function animatePage(direction) {
 }
 
 function updateControls() {
-  elements.continue.disabled = !pdfDocument || currentPage >= pdfDocument.numPages;
-  elements.selectAndContinue.disabled = !pdfDocument;
+  elements.continue.disabled = isExporting || !pdfDocument || currentPage >= pdfDocument.numPages;
+  elements.selectAndContinue.disabled = isExporting || !pdfDocument;
+  elements.downloadSelected.disabled = isExporting || !pdfDocument || selectedPages.size === 0;
+  elements.close.disabled = isExporting;
+  elements.fileInput.disabled = isExporting;
+}
+
+function canvasToJpeg(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("No se pudo crear la imagen JPG."));
+    }, "image/jpeg", 0.9);
+  });
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return url;
+}
+
+function waitForDownload() {
+  return new Promise((resolve) => setTimeout(resolve, 150));
+}
+
+async function downloadSelectedPages() {
+  if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
+
+  const pages = [...selectedPages].sort((a, b) => a - b);
+  const pageNumberWidth = String(pdfDocument.numPages).length;
+  const exportCanvas = document.createElement("canvas");
+  const context = exportCanvas.getContext("2d", { alpha: false });
+  if (!context) {
+    reportDiagnosticError(new Error("No se pudo crear el lienzo para exportar."));
+    return;
+  }
+  isExporting = true;
+  elements.exportProgress.hidden = false;
+  elements.exportProgressBar.max = pages.length;
+  elements.exportProgressBar.value = 0;
+  updateControls();
+
+  try {
+    for (let index = 0; index < pages.length; index++) {
+      const pageNumber = pages[index];
+      elements.exportProgressText.textContent = `Generando página ${index + 1} de ${pages.length}…`;
+      let page = null;
+      let objectUrl = null;
+
+      try {
+        page = await pdfDocument.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(
+          2,
+          2400 / Math.max(baseViewport.width, baseViewport.height),
+          Math.sqrt(6_000_000 / (baseViewport.width * baseViewport.height)),
+        );
+        const viewport = page.getViewport({ scale });
+        exportCanvas.width = Math.max(1, Math.floor(viewport.width));
+        exportCanvas.height = Math.max(1, Math.floor(viewport.height));
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        const blob = await canvasToJpeg(exportCanvas);
+        const paddedPage = String(pageNumber).padStart(pageNumberWidth, "0");
+        objectUrl = downloadBlob(blob, `${documentBaseName}-pagina-${paddedPage}.jpg`);
+        elements.exportProgressBar.value = index + 1;
+        elements.exportProgressText.textContent = `Descargada ${index + 1} de ${pages.length}`;
+        await waitForDownload();
+      } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        page?.cleanup();
+        exportCanvas.width = 1;
+        exportCanvas.height = 1;
+      }
+    }
+    elements.exportProgressText.textContent = `${pages.length} ${pages.length === 1 ? "imagen descargada" : "imágenes descargadas"}`;
+  } catch (error) {
+    console.error(error);
+    reportDiagnosticError(error);
+    elements.exportProgressText.textContent = `Error: ${error?.message || String(error)}`;
+  } finally {
+    exportCanvas.width = 1;
+    exportCanvas.height = 1;
+    isExporting = false;
+    updateControls();
+  }
 }
 
 function setLoading(isLoading) {
@@ -265,6 +373,7 @@ async function closeDocument() {
 }
 
 async function returnHome() {
+  if (isExporting) return;
   fileLoadSequence++;
   await closeDocument();
   elements.fileInput.value = "";
@@ -281,6 +390,7 @@ elements.fileInput.addEventListener("change", (event) => {
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
+elements.downloadSelected.addEventListener("click", downloadSelectedPages);
 elements.diagnosticsToggle.addEventListener("click", () => {
   const willShow = elements.diagnostics.hidden;
   elements.diagnostics.hidden = !willShow;
