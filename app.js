@@ -17,10 +17,26 @@ const elements = {
   error: document.querySelector("#error-message"),
   errorDetail: document.querySelector("#error-detail"),
   selectAndContinue: document.querySelector("#select-and-continue"),
+  selectionActionLabel: document.querySelector("#selection-action-label"),
   continue: document.querySelector("#continue"),
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
   selectedCount: document.querySelector("#selected-count"),
+  downloadSelected: document.querySelector("#download-selected"),
+  exportProgress: document.querySelector("#export-progress"),
+  exportProgressBar: document.querySelector("#export-progress-bar"),
+  exportProgressText: document.querySelector("#export-progress-text"),
+  diagnosticName: document.querySelector("#diagnostic-name"),
+  diagnosticSize: document.querySelector("#diagnostic-size"),
+  diagnosticType: document.querySelector("#diagnostic-type"),
+  diagnosticChange: document.querySelector("#diagnostic-change"),
+  diagnosticPdfJs: document.querySelector("#diagnostic-pdfjs"),
+  diagnosticDocument: document.querySelector("#diagnostic-document"),
+  diagnosticPages: document.querySelector("#diagnostic-pages"),
+  diagnosticError: document.querySelector("#diagnostic-error"),
+  diagnostics: document.querySelector("#diagnostics"),
+  diagnosticsToggle: document.querySelector("#diagnostics-toggle"),
+  clearCache: document.querySelector("#clear-cache"),
 };
 
 let documentTask = null;
@@ -32,19 +48,28 @@ let touchStartX = 0;
 let touchStartY = 0;
 let selectedPages = new Set();
 let fileLoadSequence = 0;
+let documentBaseName = "documento";
+let isExporting = false;
 
 async function loadPdfJs() {
-  if (pdfjsLib) return pdfjsLib;
+  if (pdfjsLib) {
+    elements.diagnosticPdfJs.textContent = "Cargado correctamente";
+    return pdfjsLib;
+  }
 
   if (!pdfJsLoadPromise) {
+    elements.diagnosticPdfJs.textContent = "Cargando módulo…";
     pdfJsLoadPromise = import(`${PDFJS_BASE_URL}/pdf.min.mjs`)
       .then((library) => {
         library.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE_URL}/pdf.worker.min.mjs`;
         pdfjsLib = library;
+        elements.diagnosticPdfJs.textContent = "Cargado correctamente";
         return library;
       })
       .catch((error) => {
         pdfJsLoadPromise = null;
+        elements.diagnosticPdfJs.textContent = "Error al cargar";
+        reportDiagnosticError(error);
         throw error;
       });
   }
@@ -57,6 +82,13 @@ async function openPdf(file) {
 
   const loadSequence = ++fileLoadSequence;
 
+  elements.diagnosticName.textContent = file.name || "(sin nombre)";
+  elements.diagnosticSize.textContent = `${file.size.toLocaleString("es-ES")} bytes`;
+  elements.diagnosticType.textContent = file.type || "No informado";
+  elements.diagnosticDocument.textContent = "No iniciado";
+  elements.diagnosticPages.textContent = "—";
+  elements.diagnosticError.textContent = "Sin errores";
+
   showReader(file.name);
   setLoading(true);
   clearError();
@@ -68,22 +100,39 @@ async function openPdf(file) {
     if (loadSequence !== fileLoadSequence) return;
 
     const bytes = new Uint8Array(buffer);
+    elements.diagnosticDocument.textContent = "Iniciado";
     documentTask = library.getDocument({ data: bytes });
     pdfDocument = await documentTask.promise;
     if (loadSequence !== fileLoadSequence) return;
 
     if (pdfDocument.numPages < 1) throw new Error("EMPTY_PDF");
+    elements.diagnosticDocument.textContent = "Completado";
+    elements.diagnosticPages.textContent = String(pdfDocument.numPages);
     currentPage = 1;
     selectedPages = new Set();
+    documentBaseName = getSafeFileName(file.name);
+    elements.exportProgress.hidden = true;
     updateSelectionCount();
     elements.total.textContent = pdfDocument.numPages;
     await renderPage();
   } catch (error) {
     console.error(error);
+    reportDiagnosticError(error);
     if (loadSequence === fileLoadSequence) showError(getReadableError(error));
   } finally {
     if (loadSequence === fileLoadSequence) setLoading(false);
   }
+}
+
+function reportDiagnosticError(error) {
+  const name = error?.name || "Error";
+  const message = error?.message || String(error);
+  elements.diagnosticError.textContent = error?.stack || `${name}: ${message}`;
+}
+
+function getSafeFileName(fileName) {
+  const withoutExtension = fileName.replace(/\.pdf$/i, "");
+  return withoutExtension.replace(/[\\/:*?"<>|]+/g, "-").trim() || "documento";
 }
 
 function validatePdfFile(file) {
@@ -147,6 +196,7 @@ async function renderPage(direction = 0) {
   } catch (error) {
     if (error?.name !== "RenderingCancelledException") {
       console.error(error);
+      reportDiagnosticError(error);
       showError("Ha ocurrido un error al dibujar esta página.");
     }
   } finally {
@@ -164,7 +214,11 @@ function changePage(offset) {
 
 function selectAndContinue() {
   if (!pdfDocument) return;
-  selectedPages.add(currentPage);
+  if (selectedPages.has(currentPage)) {
+    selectedPages.delete(currentPage);
+  } else {
+    selectedPages.add(currentPage);
+  }
   updateSelectionCount();
   updateSelectedState();
   if (currentPage < pdfDocument.numPages) changePage(1);
@@ -172,12 +226,17 @@ function selectAndContinue() {
 
 function updateSelectionCount() {
   elements.selectedCount.textContent = selectedPages.size;
+  const count = selectedPages.size;
+  elements.downloadSelected.textContent = `Descargar ${count} ${count === 1 ? "página" : "páginas"} como JPG`;
+  elements.downloadSelected.disabled = isExporting || !pdfDocument || count === 0;
 }
 
 function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
+  elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
+  elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar y continuar" : "Seleccionar y continuar";
 }
 
 function animatePage(direction) {
@@ -188,8 +247,100 @@ function animatePage(direction) {
 }
 
 function updateControls() {
-  elements.continue.disabled = !pdfDocument || currentPage >= pdfDocument.numPages;
-  elements.selectAndContinue.disabled = !pdfDocument;
+  elements.continue.disabled = isExporting || !pdfDocument || currentPage >= pdfDocument.numPages;
+  elements.selectAndContinue.disabled = isExporting || !pdfDocument;
+  elements.downloadSelected.disabled = isExporting || !pdfDocument || selectedPages.size === 0;
+  elements.close.disabled = isExporting;
+  elements.fileInput.disabled = isExporting;
+}
+
+function canvasToJpeg(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("No se pudo crear la imagen JPG."));
+    }, "image/jpeg", 0.9);
+  });
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return url;
+}
+
+function waitForDownload() {
+  return new Promise((resolve) => setTimeout(resolve, 150));
+}
+
+async function downloadSelectedPages() {
+  if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
+
+  const pages = [...selectedPages].sort((a, b) => a - b);
+  const pageNumberWidth = String(pdfDocument.numPages).length;
+  const exportCanvas = document.createElement("canvas");
+  const context = exportCanvas.getContext("2d", { alpha: false });
+  if (!context) {
+    reportDiagnosticError(new Error("No se pudo crear el lienzo para exportar."));
+    return;
+  }
+  isExporting = true;
+  elements.exportProgress.hidden = false;
+  elements.exportProgressBar.max = pages.length;
+  elements.exportProgressBar.value = 0;
+  updateControls();
+
+  try {
+    for (let index = 0; index < pages.length; index++) {
+      const pageNumber = pages[index];
+      elements.exportProgressText.textContent = `Generando página ${index + 1} de ${pages.length}…`;
+      let page = null;
+      let objectUrl = null;
+
+      try {
+        page = await pdfDocument.getPage(pageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(
+          2,
+          2400 / Math.max(baseViewport.width, baseViewport.height),
+          Math.sqrt(6_000_000 / (baseViewport.width * baseViewport.height)),
+        );
+        const viewport = page.getViewport({ scale });
+        exportCanvas.width = Math.max(1, Math.floor(viewport.width));
+        exportCanvas.height = Math.max(1, Math.floor(viewport.height));
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        const blob = await canvasToJpeg(exportCanvas);
+        const paddedPage = String(pageNumber).padStart(pageNumberWidth, "0");
+        objectUrl = downloadBlob(blob, `${documentBaseName}-pagina-${paddedPage}.jpg`);
+        elements.exportProgressBar.value = index + 1;
+        elements.exportProgressText.textContent = `Descargada ${index + 1} de ${pages.length}`;
+        await waitForDownload();
+      } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        page?.cleanup();
+        exportCanvas.width = 1;
+        exportCanvas.height = 1;
+      }
+    }
+    elements.exportProgressText.textContent = `${pages.length} ${pages.length === 1 ? "imagen descargada" : "imágenes descargadas"}`;
+  } catch (error) {
+    console.error(error);
+    reportDiagnosticError(error);
+    elements.exportProgressText.textContent = `Error: ${error?.message || String(error)}`;
+  } finally {
+    exportCanvas.width = 1;
+    exportCanvas.height = 1;
+    isExporting = false;
+    updateControls();
+  }
 }
 
 function setLoading(isLoading) {
@@ -222,6 +373,7 @@ async function closeDocument() {
 }
 
 async function returnHome() {
+  if (isExporting) return;
   fileLoadSequence++;
   await closeDocument();
   elements.fileInput.value = "";
@@ -230,6 +382,7 @@ async function returnHome() {
 }
 
 elements.fileInput.addEventListener("change", (event) => {
+  elements.diagnosticChange.textContent = `Disparado (${new Date().toLocaleTimeString("es-ES")})`;
   const [file] = event.target.files;
   event.target.value = "";
   openPdf(file);
@@ -237,6 +390,27 @@ elements.fileInput.addEventListener("change", (event) => {
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
+elements.downloadSelected.addEventListener("click", downloadSelectedPages);
+elements.diagnosticsToggle.addEventListener("click", () => {
+  const willShow = elements.diagnostics.hidden;
+  elements.diagnostics.hidden = !willShow;
+  elements.diagnosticsToggle.setAttribute("aria-expanded", String(willShow));
+});
+elements.clearCache.addEventListener("click", async () => {
+  elements.clearCache.disabled = true;
+  elements.clearCache.textContent = "Borrando…";
+  if ("caches" in window) {
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+  }
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("cache-bust", Date.now());
+  window.location.replace(url);
+});
 
 elements.stage.addEventListener("touchstart", (event) => {
   touchStartX = event.changedTouches[0].clientX;
@@ -265,7 +439,7 @@ window.addEventListener("resize", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js"));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js", { updateViaCache: "none" }));
 }
 
 updateControls();

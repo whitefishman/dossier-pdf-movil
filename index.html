@@ -73,17 +73,49 @@
             <span class="selection-count"><i aria-hidden="true"></i><strong id="selected-count">0</strong> seleccionadas</span>
           </div>
           <div class="reader-actions">
-            <button id="select-and-continue" class="action-button action-button-primary" type="button">
+            <button id="select-and-continue" class="action-button action-button-primary" type="button" aria-pressed="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
-              <span>Seleccionar y continuar</span>
+              <span id="selection-action-label">Seleccionar y continuar</span>
             </button>
             <button id="continue" class="action-button action-button-secondary" type="button">
               <span>Continuar</span>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
             </button>
           </div>
+          <button id="download-selected" class="download-button" type="button" disabled>
+            Descargar 0 páginas como JPG
+          </button>
+          <div id="export-progress" class="export-progress" role="status" aria-live="polite" hidden>
+            <progress id="export-progress-bar" value="0" max="1"></progress>
+            <span id="export-progress-text">Preparando imágenes…</span>
+          </div>
         </div>
       </section>
+
+      <button
+        id="diagnostics-toggle"
+        class="diagnostics-toggle"
+        type="button"
+        aria-controls="diagnostics"
+        aria-expanded="false"
+      >🐞 Diagnóstico</button>
+
+      <aside id="diagnostics" class="diagnostics" aria-labelledby="diagnostics-title" hidden>
+        <div class="diagnostics-header">
+          <strong id="diagnostics-title">Diagnóstico</strong>
+          <button id="clear-cache" type="button">Borrar caché y recargar</button>
+        </div>
+        <dl>
+          <div><dt>Archivo</dt><dd id="diagnostic-name">Sin seleccionar</dd></div>
+          <div><dt>Tamaño</dt><dd id="diagnostic-size">—</dd></div>
+          <div><dt>Tipo MIME</dt><dd id="diagnostic-type">—</dd></div>
+          <div><dt>Evento change</dt><dd id="diagnostic-change">No disparado</dd></div>
+          <div><dt>PDF.js</dt><dd id="diagnostic-pdfjs">Pendiente</dd></div>
+          <div><dt>getDocument()</dt><dd id="diagnostic-document">No iniciado</dd></div>
+          <div><dt>Páginas</dt><dd id="diagnostic-pages">—</dd></div>
+          <div class="diagnostic-error"><dt>Error completo / stack trace</dt><dd><pre id="diagnostic-error">Sin errores</pre></dd></div>
+        </dl>
+      </aside>
     </main>
 
     <script type="module" src="./app.js"></script>
