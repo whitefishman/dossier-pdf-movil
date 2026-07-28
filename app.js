@@ -17,6 +17,7 @@ const elements = {
   error: document.querySelector("#error-message"),
   errorDetail: document.querySelector("#error-detail"),
   selectAndContinue: document.querySelector("#select-and-continue"),
+  selectionActionLabel: document.querySelector("#selection-action-label"),
   continue: document.querySelector("#continue"),
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
@@ -29,6 +30,8 @@ const elements = {
   diagnosticDocument: document.querySelector("#diagnostic-document"),
   diagnosticPages: document.querySelector("#diagnostic-pages"),
   diagnosticError: document.querySelector("#diagnostic-error"),
+  diagnostics: document.querySelector("#diagnostics"),
+  diagnosticsToggle: document.querySelector("#diagnostics-toggle"),
   clearCache: document.querySelector("#clear-cache"),
 };
 
@@ -198,7 +201,11 @@ function changePage(offset) {
 
 function selectAndContinue() {
   if (!pdfDocument) return;
-  selectedPages.add(currentPage);
+  if (selectedPages.has(currentPage)) {
+    selectedPages.delete(currentPage);
+  } else {
+    selectedPages.add(currentPage);
+  }
   updateSelectionCount();
   updateSelectedState();
   if (currentPage < pdfDocument.numPages) changePage(1);
@@ -212,6 +219,8 @@ function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
+  elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
+  elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar y continuar" : "Seleccionar y continuar";
 }
 
 function animatePage(direction) {
@@ -272,6 +281,11 @@ elements.fileInput.addEventListener("change", (event) => {
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
+elements.diagnosticsToggle.addEventListener("click", () => {
+  const willShow = elements.diagnostics.hidden;
+  elements.diagnostics.hidden = !willShow;
+  elements.diagnosticsToggle.setAttribute("aria-expanded", String(willShow));
+});
 elements.clearCache.addEventListener("click", async () => {
   elements.clearCache.disabled = true;
   elements.clearCache.textContent = "Borrando…";

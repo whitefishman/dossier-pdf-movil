@@ -73,9 +73,9 @@
             <span class="selection-count"><i aria-hidden="true"></i><strong id="selected-count">0</strong> seleccionadas</span>
           </div>
           <div class="reader-actions">
-            <button id="select-and-continue" class="action-button action-button-primary" type="button">
+            <button id="select-and-continue" class="action-button action-button-primary" type="button" aria-pressed="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
-              <span>Seleccionar y continuar</span>
+              <span id="selection-action-label">Seleccionar y continuar</span>
             </button>
             <button id="continue" class="action-button action-button-secondary" type="button">
               <span>Continuar</span>
@@ -85,7 +85,15 @@
         </div>
       </section>
 
-      <aside class="diagnostics" aria-labelledby="diagnostics-title">
+      <button
+        id="diagnostics-toggle"
+        class="diagnostics-toggle"
+        type="button"
+        aria-controls="diagnostics"
+        aria-expanded="false"
+      >🐞 Diagnóstico</button>
+
+      <aside id="diagnostics" class="diagnostics" aria-labelledby="diagnostics-title" hidden>
         <div class="diagnostics-header">
           <strong id="diagnostics-title">Diagnóstico</strong>
           <button id="clear-cache" type="button">Borrar caché y recargar</button>
