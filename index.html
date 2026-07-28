@@ -60,7 +60,11 @@
           <div id="page-wrap" class="page-wrap">
             <canvas id="pdf-canvas" aria-label="Página del documento"></canvas>
           </div>
-          <p id="error-message" class="error-message" hidden></p>
+          <div id="error-message" class="error-message" role="alert" aria-live="assertive" hidden>
+            <strong>No se pudo abrir el documento</strong>
+            <span id="error-detail"></span>
+            <label class="error-action" for="pdf-file">Elegir otro PDF</label>
+          </div>
         </div>
 
         <div class="bottom-bar">

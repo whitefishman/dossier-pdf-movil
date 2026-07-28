@@ -1,7 +1,8 @@
-import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+const PDFJS_VERSION = "4.10.38";
+const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+let pdfjsLib = null;
+let pdfJsLoadPromise = null;
 
 const elements = {
   fileInput: document.querySelector("#pdf-file"),
@@ -14,6 +15,7 @@ const elements = {
   canvas: document.querySelector("#pdf-canvas"),
   loading: document.querySelector("#loading"),
   error: document.querySelector("#error-message"),
+  errorDetail: document.querySelector("#error-detail"),
   selectAndContinue: document.querySelector("#select-and-continue"),
   continue: document.querySelector("#continue"),
   current: document.querySelector("#current-page"),
@@ -29,19 +31,48 @@ let renderSequence = 0;
 let touchStartX = 0;
 let touchStartY = 0;
 let selectedPages = new Set();
+let fileLoadSequence = 0;
+
+async function loadPdfJs() {
+  if (pdfjsLib) return pdfjsLib;
+
+  if (!pdfJsLoadPromise) {
+    pdfJsLoadPromise = import(`${PDFJS_BASE_URL}/pdf.min.mjs`)
+      .then((library) => {
+        library.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE_URL}/pdf.worker.min.mjs`;
+        pdfjsLib = library;
+        return library;
+      })
+      .catch((error) => {
+        pdfJsLoadPromise = null;
+        throw error;
+      });
+  }
+
+  return pdfJsLoadPromise;
+}
 
 async function openPdf(file) {
   if (!file) return;
+
+  const loadSequence = ++fileLoadSequence;
 
   showReader(file.name);
   setLoading(true);
   clearError();
 
   try {
+    validatePdfFile(file);
     await closeDocument();
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    documentTask = pdfjsLib.getDocument({ data: bytes });
+    const [library, buffer] = await Promise.all([loadPdfJs(), file.arrayBuffer()]);
+    if (loadSequence !== fileLoadSequence) return;
+
+    const bytes = new Uint8Array(buffer);
+    documentTask = library.getDocument({ data: bytes });
     pdfDocument = await documentTask.promise;
+    if (loadSequence !== fileLoadSequence) return;
+
+    if (pdfDocument.numPages < 1) throw new Error("EMPTY_PDF");
     currentPage = 1;
     selectedPages = new Set();
     updateSelectionCount();
@@ -49,10 +80,27 @@ async function openPdf(file) {
     await renderPage();
   } catch (error) {
     console.error(error);
-    showError("No pudimos abrir este PDF. Comprueba que el archivo sea válido e inténtalo de nuevo.");
+    if (loadSequence === fileLoadSequence) showError(getReadableError(error));
   } finally {
-    setLoading(false);
+    if (loadSequence === fileLoadSequence) setLoading(false);
   }
+}
+
+function validatePdfFile(file) {
+  const hasPdfName = file.name.toLowerCase().endsWith(".pdf");
+  const hasPdfType = file.type === "application/pdf";
+
+  if (!hasPdfName && !hasPdfType) throw new Error("NOT_PDF");
+  if (file.size === 0) throw new Error("EMPTY_FILE");
+}
+
+function getReadableError(error) {
+  if (error?.message === "NOT_PDF") return "El archivo seleccionado no parece ser un PDF.";
+  if (error?.message === "EMPTY_FILE" || error?.message === "EMPTY_PDF") return "El archivo está vacío y no contiene páginas.";
+  if (error?.name === "PasswordException") return "Este PDF está protegido con contraseña y no puede abrirse todavía.";
+  if (error?.name === "InvalidPDFException") return "El archivo está dañado o no contiene un PDF válido.";
+  if (error instanceof TypeError && !pdfjsLib) return "No se pudo cargar PDF.js. Comprueba tu conexión e inténtalo de nuevo.";
+  return "Comprueba que el archivo sea un PDF válido e inténtalo de nuevo.";
 }
 
 function showReader(fileName) {
@@ -150,7 +198,7 @@ function setLoading(isLoading) {
 }
 
 function showError(message) {
-  elements.error.textContent = message;
+  elements.errorDetail.textContent = message;
   elements.error.hidden = false;
   elements.wrap.hidden = true;
 }
@@ -174,13 +222,18 @@ async function closeDocument() {
 }
 
 async function returnHome() {
+  fileLoadSequence++;
   await closeDocument();
   elements.fileInput.value = "";
   elements.reader.hidden = true;
   elements.welcome.hidden = false;
 }
 
-elements.fileInput.addEventListener("change", (event) => openPdf(event.target.files[0]));
+elements.fileInput.addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  event.target.value = "";
+  openPdf(file);
+});
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
