@@ -21,6 +21,15 @@ const elements = {
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
   selectedCount: document.querySelector("#selected-count"),
+  diagnosticName: document.querySelector("#diagnostic-name"),
+  diagnosticSize: document.querySelector("#diagnostic-size"),
+  diagnosticType: document.querySelector("#diagnostic-type"),
+  diagnosticChange: document.querySelector("#diagnostic-change"),
+  diagnosticPdfJs: document.querySelector("#diagnostic-pdfjs"),
+  diagnosticDocument: document.querySelector("#diagnostic-document"),
+  diagnosticPages: document.querySelector("#diagnostic-pages"),
+  diagnosticError: document.querySelector("#diagnostic-error"),
+  clearCache: document.querySelector("#clear-cache"),
 };
 
 let documentTask = null;
@@ -34,17 +43,24 @@ let selectedPages = new Set();
 let fileLoadSequence = 0;
 
 async function loadPdfJs() {
-  if (pdfjsLib) return pdfjsLib;
+  if (pdfjsLib) {
+    elements.diagnosticPdfJs.textContent = "Cargado correctamente";
+    return pdfjsLib;
+  }
 
   if (!pdfJsLoadPromise) {
+    elements.diagnosticPdfJs.textContent = "Cargando módulo…";
     pdfJsLoadPromise = import(`${PDFJS_BASE_URL}/pdf.min.mjs`)
       .then((library) => {
         library.GlobalWorkerOptions.workerSrc = `${PDFJS_BASE_URL}/pdf.worker.min.mjs`;
         pdfjsLib = library;
+        elements.diagnosticPdfJs.textContent = "Cargado correctamente";
         return library;
       })
       .catch((error) => {
         pdfJsLoadPromise = null;
+        elements.diagnosticPdfJs.textContent = "Error al cargar";
+        reportDiagnosticError(error);
         throw error;
       });
   }
@@ -57,6 +73,13 @@ async function openPdf(file) {
 
   const loadSequence = ++fileLoadSequence;
 
+  elements.diagnosticName.textContent = file.name || "(sin nombre)";
+  elements.diagnosticSize.textContent = `${file.size.toLocaleString("es-ES")} bytes`;
+  elements.diagnosticType.textContent = file.type || "No informado";
+  elements.diagnosticDocument.textContent = "No iniciado";
+  elements.diagnosticPages.textContent = "—";
+  elements.diagnosticError.textContent = "Sin errores";
+
   showReader(file.name);
   setLoading(true);
   clearError();
@@ -68,11 +91,14 @@ async function openPdf(file) {
     if (loadSequence !== fileLoadSequence) return;
 
     const bytes = new Uint8Array(buffer);
+    elements.diagnosticDocument.textContent = "Iniciado";
     documentTask = library.getDocument({ data: bytes });
     pdfDocument = await documentTask.promise;
     if (loadSequence !== fileLoadSequence) return;
 
     if (pdfDocument.numPages < 1) throw new Error("EMPTY_PDF");
+    elements.diagnosticDocument.textContent = "Completado";
+    elements.diagnosticPages.textContent = String(pdfDocument.numPages);
     currentPage = 1;
     selectedPages = new Set();
     updateSelectionCount();
@@ -80,10 +106,17 @@ async function openPdf(file) {
     await renderPage();
   } catch (error) {
     console.error(error);
+    reportDiagnosticError(error);
     if (loadSequence === fileLoadSequence) showError(getReadableError(error));
   } finally {
     if (loadSequence === fileLoadSequence) setLoading(false);
   }
+}
+
+function reportDiagnosticError(error) {
+  const name = error?.name || "Error";
+  const message = error?.message || String(error);
+  elements.diagnosticError.textContent = error?.stack || `${name}: ${message}`;
 }
 
 function validatePdfFile(file) {
@@ -147,6 +180,7 @@ async function renderPage(direction = 0) {
   } catch (error) {
     if (error?.name !== "RenderingCancelledException") {
       console.error(error);
+      reportDiagnosticError(error);
       showError("Ha ocurrido un error al dibujar esta página.");
     }
   } finally {
@@ -230,6 +264,7 @@ async function returnHome() {
 }
 
 elements.fileInput.addEventListener("change", (event) => {
+  elements.diagnosticChange.textContent = `Disparado (${new Date().toLocaleTimeString("es-ES")})`;
   const [file] = event.target.files;
   event.target.value = "";
   openPdf(file);
@@ -237,6 +272,21 @@ elements.fileInput.addEventListener("change", (event) => {
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
+elements.clearCache.addEventListener("click", async () => {
+  elements.clearCache.disabled = true;
+  elements.clearCache.textContent = "Borrando…";
+  if ("caches" in window) {
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+  }
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("cache-bust", Date.now());
+  window.location.replace(url);
+});
 
 elements.stage.addEventListener("touchstart", (event) => {
   touchStartX = event.changedTouches[0].clientX;
@@ -265,7 +315,7 @@ window.addEventListener("resize", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js"));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js", { updateViaCache: "none" }));
 }
 
 updateControls();
