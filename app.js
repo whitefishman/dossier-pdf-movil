@@ -631,19 +631,23 @@ function disposeThumbnails() {
 }
 
 function updatePreparedNumbers() {
-  [...elements.prepareGrid.querySelectorAll(".prepare-item")].forEach((item, index) => {
-    item.querySelector(".prepare-number").textContent = index + 1;
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  items.forEach((item, index) => {
+    const position = item.querySelector(".prepare-number");
+    position.textContent = index + 1;
+    position.setAttribute("aria-label", `Posición de envío ${index + 1}`);
+    item.querySelector('[data-action="up"]').disabled = isExporting || index === 0;
+    item.querySelector('[data-action="down"]').disabled = isExporting || index === items.length - 1;
+    item.querySelector('[data-action="first"]').disabled = isExporting || index === 0;
+    item.querySelector('[data-action="remove"]').disabled = isExporting;
   });
 }
 
 function syncPreparedOrder() {
   const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-  const visibleOrder = items.map((item) => Number(item.dataset.page));
+  preparedPages = items.map((item) => Number(item.dataset.page));
   const featuredSet = new Set(featuredPages);
-  featuredPages = visibleOrder.filter((pageNumber) => featuredSet.has(pageNumber));
-  preparedPages = [...featuredPages, ...visibleOrder.filter((pageNumber) => !featuredSet.has(pageNumber))];
-  const itemsByPage = new Map(items.map((item) => [Number(item.dataset.page), item]));
-  for (const pageNumber of preparedPages) elements.prepareGrid.append(itemsByPage.get(pageNumber));
+  featuredPages = preparedPages.filter((pageNumber) => featuredSet.has(pageNumber));
   selectedPages = new Set(preparedPages);
   updatePreparedNumbers();
   updateSelectionCount();
@@ -651,53 +655,14 @@ function syncPreparedOrder() {
   elements.confirmDownload.disabled = preparedPages.length === 0 || isExporting;
 }
 
-function enableThumbnailDrag(item) {
-  let holdTimer = null;
-  let dragging = false;
-  let startX = 0;
-  let startY = 0;
-
-  item.addEventListener("pointerdown", (event) => {
-    if (event.target.closest(".prepare-remove") || isExporting) return;
-    startX = event.clientX;
-    startY = event.clientY;
-    holdTimer = setTimeout(() => {
-      dragging = true;
-      item.classList.add("is-dragging");
-      item.setPointerCapture(event.pointerId);
-      if (navigator.vibrate) navigator.vibrate(30);
-    }, 350);
-  });
-
-  item.addEventListener("pointermove", (event) => {
-    if (!dragging) {
-      if (Math.hypot(event.clientX - startX, event.clientY - startY) > 8) {
-        clearTimeout(holdTimer);
-        holdTimer = null;
-      }
-      return;
-    }
-    event.preventDefault();
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".prepare-item");
-    if (!target || target === item || target.parentElement !== elements.prepareGrid) return;
-    const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-    const fromIndex = items.indexOf(item);
-    const targetIndex = items.indexOf(target);
-    if (fromIndex < targetIndex) target.after(item);
-    else elements.prepareGrid.insertBefore(item, target);
-    syncPreparedOrder();
-  });
-
-  const finishDrag = () => {
-    clearTimeout(holdTimer);
-    holdTimer = null;
-    if (dragging) syncPreparedOrder();
-    dragging = false;
-    item.classList.remove("is-dragging");
-  };
-  item.addEventListener("pointerup", finishDrag);
-  item.addEventListener("pointercancel", finishDrag);
-  item.addEventListener("contextmenu", (event) => event.preventDefault());
+function movePreparedItem(item, action) {
+  if (isExporting) return;
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  const index = items.indexOf(item);
+  if (action === "up" && index > 0) elements.prepareGrid.insertBefore(item, items[index - 1]);
+  if (action === "down" && index < items.length - 1) items[index + 1].after(item);
+  if (action === "first" && index > 0) elements.prepareGrid.prepend(item);
+  syncPreparedOrder();
 }
 
 function createPreparedItem(pageNumber, index) {
@@ -705,22 +670,32 @@ function createPreparedItem(pageNumber, index) {
   item.className = "prepare-item";
   item.dataset.page = pageNumber;
   item.innerHTML = `
-    <span class="prepare-number">${index + 1}</span>
-    <span class="prepare-placeholder">Páxina ${pageNumber}</span>
-    <button class="prepare-remove" type="button" aria-label="Eliminar a páxina ${pageNumber}">×</button>
+    <div class="prepare-preview">
+      <span class="prepare-number">${index + 1}</span>
+      <span class="prepare-placeholder">Preparando…</span>
+      <span class="prepare-page-label">Páxina ${pageNumber}</span>
+    </div>
+    <div class="prepare-item-controls">
+      <button type="button" data-action="up">Subir</button>
+      <button type="button" data-action="down">Baixar</button>
+      <button type="button" data-action="first">Primeira</button>
+      <button type="button" data-action="remove">Eliminar</button>
+    </div>
   `;
-  item.querySelector(".prepare-remove").addEventListener("click", () => {
-    if (isExporting) return;
+  item.querySelector(".prepare-item-controls").addEventListener("click", (event) => {
+    const action = event.target.dataset.action;
+    if (!action || isExporting) return;
+    if (action !== "remove") {
+      movePreparedItem(item, action);
+      return;
+    }
     const url = thumbnailUrls.get(pageNumber);
     if (url) URL.revokeObjectURL(url);
     thumbnailUrls.delete(pageNumber);
     item.remove();
     syncPreparedOrder();
-    if (preparedPages.length === 0) {
-      elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
-    }
+    if (preparedPages.length === 0) elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
   });
-  enableThumbnailDrag(item);
   return item;
 }
 
@@ -786,6 +761,7 @@ function openPrepareSend() {
   disposeThumbnails();
   preparedPages = [...selectedPages];
   elements.prepareGrid.replaceChildren(...preparedPages.map(createPreparedItem));
+  updatePreparedNumbers();
   elements.prepareProgress.hidden = true;
   elements.confirmDownload.disabled = false;
   elements.reader.hidden = true;
@@ -820,6 +796,7 @@ async function downloadSelectedPages() {
   elements.prepareProgressBar.value = 0;
   elements.backToReader.disabled = true;
   elements.confirmDownload.disabled = true;
+  updatePreparedNumbers();
   updateControls();
 
   try {
@@ -868,6 +845,7 @@ async function downloadSelectedPages() {
     isExporting = false;
     elements.backToReader.disabled = false;
     elements.confirmDownload.disabled = preparedPages.length === 0;
+    updatePreparedNumbers();
     updateControls();
   }
 }
