@@ -1,5 +1,6 @@
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
+const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -26,6 +27,9 @@ const elements = {
   exportProgress: document.querySelector("#export-progress"),
   exportProgressBar: document.querySelector("#export-progress-bar"),
   exportProgressText: document.querySelector("#export-progress-text"),
+  sessionRestore: document.querySelector("#session-restore"),
+  restoreSession: document.querySelector("#restore-session"),
+  discardSession: document.querySelector("#discard-session"),
   diagnosticName: document.querySelector("#diagnostic-name"),
   diagnosticSize: document.querySelector("#diagnostic-size"),
   diagnosticType: document.querySelector("#diagnostic-type"),
@@ -50,6 +54,8 @@ let selectedPages = new Set();
 let fileLoadSequence = 0;
 let documentBaseName = "documento";
 let isExporting = false;
+let currentFileIdentity = null;
+let pendingSession = null;
 
 async function loadPdfJs() {
   if (pdfjsLib) {
@@ -92,6 +98,8 @@ async function openPdf(file) {
   showReader(file.name);
   setLoading(true);
   clearError();
+  pendingSession = null;
+  if (elements.sessionRestore) elements.sessionRestore.hidden = true;
 
   try {
     validatePdfFile(file);
@@ -110,11 +118,21 @@ async function openPdf(file) {
     setOptionalText(elements.diagnosticPages, String(pdfDocument.numPages));
     currentPage = 1;
     selectedPages = new Set();
+    currentFileIdentity = getFileIdentity(file, bytes);
     documentBaseName = getSafeFileName(file.name);
     if (elements.exportProgress) elements.exportProgress.hidden = true;
     updateSelectionCount();
     elements.total.textContent = pdfDocument.numPages;
+    const savedSession = readSavedSession();
+    const canOfferRestore = elements.sessionRestore && elements.restoreSession && elements.discardSession;
+    if (savedSession?.fileIdentity === currentFileIdentity && canOfferRestore) {
+      pendingSession = savedSession;
+    } else {
+      discardSavedSession();
+      pendingSession = null;
+    }
     await renderPage();
+    if (pendingSession && elements.sessionRestore) elements.sessionRestore.hidden = false;
   } catch (error) {
     console.error(error);
     reportDiagnosticError(error);
@@ -137,6 +155,69 @@ function setOptionalText(element, text) {
 function getSafeFileName(fileName) {
   const withoutExtension = fileName.replace(/\.pdf$/i, "");
   return withoutExtension.replace(/[\\/:*?"<>|]+/g, "-").trim() || "documento";
+}
+
+function getFileIdentity(file, bytes) {
+  let fingerprint = 2166136261;
+  const step = Math.max(1, Math.floor(bytes.length / 4096));
+  for (let index = 0; index < bytes.length; index += step) {
+    fingerprint = Math.imul(fingerprint ^ bytes[index], 16777619);
+  }
+  return JSON.stringify([file.name, file.size, file.lastModified, file.type, fingerprint >>> 0]);
+}
+
+function readSavedSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY));
+    if (!session || typeof session.fileIdentity !== "string" || !Number.isInteger(session.currentPage) || !Array.isArray(session.selectedPages)) {
+      return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function saveCurrentSession() {
+  if (!pdfDocument || !currentFileIdentity || pendingSession) return;
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      fileIdentity: currentFileIdentity,
+      currentPage,
+      selectedPages: [...selectedPages].sort((a, b) => a - b),
+    }));
+  } catch {
+    // Reading the PDF must continue even when storage is unavailable.
+  }
+}
+
+function discardSavedSession() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // Reading the PDF must continue even when storage is unavailable.
+  }
+}
+
+async function restoreSavedSession() {
+  if (!pdfDocument || !pendingSession) return;
+  currentPage = Math.min(Math.max(pendingSession.currentPage, 1), pdfDocument.numPages);
+  selectedPages = new Set(pendingSession.selectedPages.filter((page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages));
+  pendingSession = null;
+  if (elements.sessionRestore) elements.sessionRestore.hidden = true;
+  updateSelectionCount();
+  await renderPage();
+}
+
+async function startFreshSession() {
+  if (!pdfDocument) return;
+  pendingSession = null;
+  discardSavedSession();
+  currentPage = 1;
+  selectedPages = new Set();
+  if (elements.sessionRestore) elements.sessionRestore.hidden = true;
+  updateSelectionCount();
+  await renderPage();
 }
 
 function validatePdfFile(file) {
@@ -209,15 +290,16 @@ async function renderPage(direction = 0) {
 }
 
 function changePage(offset) {
-  if (!pdfDocument) return;
+  if (!pdfDocument || pendingSession) return;
   const nextPage = currentPage + offset;
   if (nextPage < 1 || nextPage > pdfDocument.numPages) return;
   currentPage = nextPage;
+  saveCurrentSession();
   renderPage(offset);
 }
 
 function selectAndContinue() {
-  if (!pdfDocument) return;
+  if (!pdfDocument || pendingSession) return;
   if (selectedPages.has(currentPage)) {
     selectedPages.delete(currentPage);
   } else {
@@ -225,6 +307,7 @@ function selectAndContinue() {
   }
   updateSelectionCount();
   updateSelectedState();
+  saveCurrentSession();
   if (currentPage < pdfDocument.numPages) changePage(1);
 }
 
@@ -253,8 +336,8 @@ function animatePage(direction) {
 }
 
 function updateControls() {
-  elements.continue.disabled = isExporting || !pdfDocument || currentPage >= pdfDocument.numPages;
-  elements.selectAndContinue.disabled = isExporting || !pdfDocument;
+  elements.continue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument || currentPage >= pdfDocument.numPages;
+  elements.selectAndContinue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
   if (elements.downloadSelected) {
     elements.downloadSelected.disabled = isExporting || !pdfDocument || selectedPages.size === 0;
   }
@@ -386,6 +469,9 @@ async function returnHome() {
   if (isExporting) return;
   fileLoadSequence++;
   await closeDocument();
+  pendingSession = null;
+  currentFileIdentity = null;
+  if (elements.sessionRestore) elements.sessionRestore.hidden = true;
   elements.fileInput.value = "";
   elements.reader.hidden = true;
   elements.welcome.hidden = false;
@@ -401,6 +487,8 @@ elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", downloadSelectedPages);
+elements.restoreSession?.addEventListener("click", restoreSavedSession);
+elements.discardSession?.addEventListener("click", startFreshSession);
 elements.diagnosticsToggle?.addEventListener("click", () => {
   if (!elements.diagnostics) return;
   const willShow = elements.diagnostics.hidden;

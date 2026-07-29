@@ -92,6 +92,13 @@ h1 em { color: var(--accent); font-weight: 400; }
 .error-message strong { margin-bottom: 7px; color: #542118; font-family: Georgia, serif; font-size: 18px; }
 .error-message span { color: #7a5149; font-size: 13px; }
 .error-action { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; margin-top: 17px; padding: 0 17px; color: white; background: #7a2b1d; border-radius: 5px; font-size: 12px; font-weight: 750; cursor: pointer; }
+.session-restore { position: absolute; z-index: 4; width: min(330px, calc(100% - 24px)); padding: 20px; color: var(--ink); background: #fffdf8; border: 1px solid var(--line); border-radius: 8px; text-align: center; box-shadow: 0 12px 30px rgba(25, 40, 36, .18); }
+.session-restore strong, .session-restore span { display: block; }
+.session-restore strong { margin-bottom: 6px; font-family: Georgia, serif; font-size: 18px; }
+.session-restore span { color: var(--muted); font-size: 13px; }
+.session-restore div { display: grid; gap: 8px; margin-top: 16px; }
+.session-restore button { min-height: 42px; border: 0; color: white; background: var(--green); border-radius: 5px; font-size: 12px; font-weight: 750; cursor: pointer; }
+.session-restore button:last-child { color: var(--green); background: transparent; border: 1px solid var(--green); }
 .bottom-bar { flex: 0 0 auto; padding: 12px 12px max(12px, env(safe-area-inset-bottom)); background: var(--paper); border-top: 1px solid var(--line); box-shadow: 0 -8px 25px rgba(25, 40, 36, .06); }
 .reader-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 3px 10px; color: var(--muted); font-size: 12px; }
 .reader-status strong { color: var(--ink); }
