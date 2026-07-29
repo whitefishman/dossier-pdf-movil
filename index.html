@@ -1,35 +1,35 @@
 <!doctype html>
-<html lang="es">
+<html lang="gl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#f5f1e8" />
-    <meta name="description" content="Abre y lee tus documentos PDF, página a página." />
+    <meta name="theme-color" content="#007BC4" />
+    <meta name="description" content="Selecciona e exporta páxinas dun PDF como imaxes." />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icons/icon.svg" />
     <link rel="stylesheet" href="./styles.css" />
-    <title>Dossier PDF</title>
+    <title>Dossier Xa!</title>
   </head>
   <body>
     <main class="app-shell">
       <section id="welcome" class="welcome" aria-labelledby="app-title">
         <header class="brand">
           <span class="brand-mark" aria-hidden="true">D</span>
-          <span>Dossier PDF</span>
+          <span>Dossier Xa!</span>
         </header>
 
         <div class="welcome-content">
-          <p class="eyebrow">TU LECTOR PERSONAL</p>
-          <h1 id="app-title">Documentos,<br /><em>sin distracciones.</em></h1>
-          <p class="intro">Abre un PDF de tu teléfono y léelo con la calma que merece.</p>
+          <p class="eyebrow">DOSSIER XA!</p>
+          <h1 id="app-title">Dossier Xa!</h1>
+          <p class="intro">Selecciona e exporta páxinas dun PDF como imaxes.</p>
 
           <label class="file-button" for="pdf-file">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" /></svg>
-            <span>Seleccionar PDF</span>
+            <span>Abrir PDF</span>
           </label>
           <input id="pdf-file" type="file" accept="application/pdf,.pdf" />
-          <p class="privacy"><span aria-hidden="true">●</span> Tu archivo no sale de este dispositivo</p>
+          <p class="privacy"><span aria-hidden="true">●</span> O teu arquivo non sae deste dispositivo</p>
         </div>
 
         <div class="document-motif" aria-hidden="true">
@@ -40,14 +40,14 @@
 
       <section id="reader" class="reader" aria-label="Lector de PDF" hidden>
         <header class="reader-header">
-          <button id="close-file" class="icon-button" type="button" aria-label="Cerrar documento">
+          <button id="close-file" class="icon-button" type="button" aria-label="Pechar documento">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
           </button>
           <div class="document-info">
             <strong id="document-name">Documento</strong>
             <span>PDF</span>
           </div>
-          <label class="icon-button" for="pdf-file" aria-label="Abrir otro documento">
+          <label class="icon-button" for="pdf-file" aria-label="Abrir outro documento">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5V8a2 2 0 0 1 2-2h4l2-2h6a2 2 0 0 1 2 2v13.5M3 19.5h18" /></svg>
           </label>
         </header>
@@ -58,12 +58,20 @@
             <span>Preparando documento…</span>
           </div>
           <div id="page-wrap" class="page-wrap">
-            <canvas id="pdf-canvas" aria-label="Página del documento"></canvas>
+            <canvas id="pdf-canvas" aria-label="Páxina do documento"></canvas>
           </div>
           <div id="error-message" class="error-message" role="alert" aria-live="assertive" hidden>
-            <strong>No se pudo abrir el documento</strong>
+            <strong>Non se puido abrir o documento</strong>
             <span id="error-detail"></span>
-            <label class="error-action" for="pdf-file">Elegir otro PDF</label>
+            <label class="error-action" for="pdf-file">Abrir PDF</label>
+          </div>
+          <div id="session-restore" class="session-restore" role="dialog" aria-labelledby="session-restore-title" hidden>
+            <strong id="session-restore-title">Sesión gardada</strong>
+            <span>Queres continuar onde o deixaches?</span>
+            <div>
+              <button id="restore-session" type="button">Restaurar sesión</button>
+              <button id="discard-session" type="button">Descartar sesión</button>
+            </div>
           </div>
           <div id="session-restore" class="session-restore" role="dialog" aria-labelledby="session-restore-title" hidden>
             <strong id="session-restore-title">Sesión guardada</strong>
@@ -77,13 +85,13 @@
 
         <div class="bottom-bar">
           <div class="reader-status" aria-live="polite">
-            <span>Página <strong><span id="current-page">1</span> de <span id="total-pages">1</span></strong></span>
+            <span>Páxina <strong><span id="current-page">1</span> de <span id="total-pages">1</span></strong></span>
             <span class="selection-count"><i aria-hidden="true"></i><strong id="selected-count">0</strong> seleccionadas</span>
           </div>
           <div class="reader-actions">
             <button id="select-and-continue" class="action-button action-button-primary" type="button" aria-pressed="false">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
-              <span id="selection-action-label">Seleccionar y continuar</span>
+              <span id="selection-action-label">Seleccionar e continuar</span>
             </button>
             <button id="continue" class="action-button action-button-secondary" type="button">
               <span>Continuar</span>
@@ -91,11 +99,11 @@
             </button>
           </div>
           <button id="download-selected" class="download-button" type="button" disabled>
-            Descargar 0 páginas como JPG
+            Non hai páxinas seleccionadas.
           </button>
           <div id="export-progress" class="export-progress" role="status" aria-live="polite" hidden>
             <progress id="export-progress-bar" value="0" max="1"></progress>
-            <span id="export-progress-text">Preparando imágenes…</span>
+            <span id="export-progress-text">Preparando imaxes…</span>
           </div>
         </div>
       </section>
@@ -111,17 +119,17 @@
       <aside id="diagnostics" class="diagnostics" aria-labelledby="diagnostics-title" hidden>
         <div class="diagnostics-header">
           <strong id="diagnostics-title">Diagnóstico</strong>
-          <button id="clear-cache" type="button">Borrar caché y recargar</button>
+          <button id="clear-cache" type="button">Borrar caché e recargar</button>
         </div>
         <dl>
-          <div><dt>Archivo</dt><dd id="diagnostic-name">Sin seleccionar</dd></div>
+          <div><dt>Arquivo</dt><dd id="diagnostic-name">Sen seleccionar</dd></div>
           <div><dt>Tamaño</dt><dd id="diagnostic-size">—</dd></div>
           <div><dt>Tipo MIME</dt><dd id="diagnostic-type">—</dd></div>
-          <div><dt>Evento change</dt><dd id="diagnostic-change">No disparado</dd></div>
-          <div><dt>PDF.js</dt><dd id="diagnostic-pdfjs">Pendiente</dd></div>
-          <div><dt>getDocument()</dt><dd id="diagnostic-document">No iniciado</dd></div>
-          <div><dt>Páginas</dt><dd id="diagnostic-pages">—</dd></div>
-          <div class="diagnostic-error"><dt>Error completo / stack trace</dt><dd><pre id="diagnostic-error">Sin errores</pre></dd></div>
+          <div><dt>Evento change</dt><dd id="diagnostic-change">Non disparado</dd></div>
+          <div><dt>PDF.js</dt><dd id="diagnostic-pdfjs">Pendente</dd></div>
+          <div><dt>getDocument()</dt><dd id="diagnostic-document">Non iniciado</dd></div>
+          <div><dt>Páxinas</dt><dd id="diagnostic-pages">—</dd></div>
+          <div class="diagnostic-error"><dt>Erro completo / stack trace</dt><dd><pre id="diagnostic-error">Sen erros</pre></dd></div>
         </dl>
       </aside>
     </main>

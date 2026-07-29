@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="108" fill="#173b32"/>
-  <path d="M144 86h164l66 66v274H144z" fill="#fffdf8"/>
-  <path d="M308 86v66h66" fill="#e6ded0"/>
-  <path d="M192 218h134M192 262h102M192 306h118" stroke="#c8c5bb" stroke-width="18" stroke-linecap="round"/>
-  <rect x="260" y="337" width="114" height="60" rx="8" fill="#e8613d"/>
-  <text x="317" y="376" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="27" font-weight="700">PDF</text>
+  <rect width="512" height="512" rx="108" fill="#007BC4"/>
+  <path d="M144 86h164l66 66v274H144z" fill="#ffffff"/>
+  <path d="M308 86v66h66" fill="#e5e7eb"/>
+  <path d="M192 218h134M192 262h102M192 306h118" stroke="#9ca3af" stroke-width="18" stroke-linecap="round"/>
+  <rect x="260" y="337" width="114" height="60" rx="8" fill="#007BC4"/>
+  <text x="317" y="376" text-anchor="middle" fill="white" font-family="Xunta Sans,system-ui,sans-serif" font-size="27" font-weight="700">PDF</text>
 </svg>

@@ -1,12 +1,12 @@
 {
-  "name": "Dossier PDF",
-  "short_name": "Dossier",
-  "description": "Lee tus documentos PDF página a página.",
+  "name": "Dossier Xa!",
+  "short_name": "Dossier Xa!",
+  "description": "Selecciona e exporta páxinas dun PDF como imaxes.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f5f1e8",
-  "theme_color": "#f5f1e8",
+  "background_color": "#ffffff",
+  "theme_color": "#007BC4",
   "orientation": "portrait-primary",
   "icons": [
     { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }

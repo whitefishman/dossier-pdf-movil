@@ -91,7 +91,7 @@ async function loadPdfJs() {
       })
       .catch((error) => {
         pdfJsLoadPromise = null;
-        setOptionalText(elements.diagnosticPdfJs, "Error al cargar");
+        setOptionalText(elements.diagnosticPdfJs, "Erro ao cargar");
         reportDiagnosticError(error);
         throw error;
       });
@@ -105,12 +105,12 @@ async function openPdf(file) {
 
   const loadSequence = ++fileLoadSequence;
 
-  setOptionalText(elements.diagnosticName, file.name || "(sin nombre)");
-  setOptionalText(elements.diagnosticSize, `${file.size.toLocaleString("es-ES")} bytes`);
-  setOptionalText(elements.diagnosticType, file.type || "No informado");
-  setOptionalText(elements.diagnosticDocument, "No iniciado");
+  setOptionalText(elements.diagnosticName, file.name || "(sen nome)");
+  setOptionalText(elements.diagnosticSize, `${file.size.toLocaleString("gl-ES")} bytes`);
+  setOptionalText(elements.diagnosticType, file.type || "Non informado");
+  setOptionalText(elements.diagnosticDocument, "Non iniciado");
   setOptionalText(elements.diagnosticPages, "—");
-  setOptionalText(elements.diagnosticError, "Sin errores");
+  setOptionalText(elements.diagnosticError, "Sen erros");
 
   showReader(file.name);
   setLoading(true);
@@ -248,12 +248,12 @@ function validatePdfFile(file) {
 }
 
 function getReadableError(error) {
-  if (error?.message === "NOT_PDF") return "El archivo seleccionado no parece ser un PDF.";
-  if (error?.message === "EMPTY_FILE" || error?.message === "EMPTY_PDF") return "El archivo está vacío y no contiene páginas.";
-  if (error?.name === "PasswordException") return "Este PDF está protegido con contraseña y no puede abrirse todavía.";
-  if (error?.name === "InvalidPDFException") return "El archivo está dañado o no contiene un PDF válido.";
-  if (error instanceof TypeError && !pdfjsLib) return "No se pudo cargar PDF.js. Comprueba tu conexión e inténtalo de nuevo.";
-  return "Comprueba que el archivo sea un PDF válido e inténtalo de nuevo.";
+  if (error?.message === "NOT_PDF") return "O arquivo seleccionado non parece ser un PDF.";
+  if (error?.message === "EMPTY_FILE" || error?.message === "EMPTY_PDF") return "O arquivo está baleiro e non contén páxinas.";
+  if (error?.name === "PasswordException") return "Este PDF está protexido con contrasinal e aínda non se pode abrir.";
+  if (error?.name === "InvalidPDFException") return "O arquivo está danado ou non contén un PDF válido.";
+  if (error instanceof TypeError && !pdfjsLib) return "Non se puido cargar PDF.js. Comproba a conexión e téntao de novo.";
+  return "Comproba que o arquivo sexa un PDF válido e téntao de novo.";
 }
 
 function showReader(fileName) {
@@ -422,7 +422,7 @@ async function preloadAdjacentPages(sequence) {
       });
       pruneAdjacentPageCache();
     } catch (error) {
-      if (error?.name !== "RenderingCancelledException") console.warn("No se pudo precargar una página adyacente.", error);
+      if (error?.name !== "RenderingCancelledException") console.warn("Non se puido precargar unha páxina adxacente.", error);
     } finally {
       if (preloadTask === task) preloadTask = null;
       page?.cleanup();
@@ -476,7 +476,7 @@ async function renderPage(direction = 0) {
     if (error?.name !== "RenderingCancelledException") {
       console.error(error);
       reportDiagnosticError(error);
-      showError("Ha ocurrido un error al dibujar esta página.");
+      showError("Produciuse un erro ao debuxar esta páxina.");
     }
   } finally {
     page?.cleanup();
@@ -513,7 +513,7 @@ function updateSelectionCount() {
   elements.selectedCount.textContent = selectedPages.size;
   const count = selectedPages.size;
   if (elements.downloadSelected) {
-    elements.downloadSelected.textContent = `Descargar ${count} ${count === 1 ? "página" : "páginas"} como JPG`;
+    elements.downloadSelected.textContent = count === 0 ? "Non hai páxinas seleccionadas." : "Descargar imaxes";
     elements.downloadSelected.disabled = isExporting || !pdfDocument || count === 0;
   }
 }
@@ -523,7 +523,7 @@ function updateSelectedState() {
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
-  elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar y continuar" : "Seleccionar y continuar";
+  elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar e continuar" : "Seleccionar e continuar";
 }
 
 function animatePage(direction) {
@@ -547,7 +547,7 @@ function canvasToJpeg(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
-      else reject(new Error("No se pudo crear la imagen JPG."));
+      else reject(new Error("Non se puido crear a imaxe JPG."));
     }, "image/jpeg", 0.9);
   });
 }
@@ -575,7 +575,7 @@ async function downloadSelectedPages() {
   const exportCanvas = document.createElement("canvas");
   const context = exportCanvas.getContext("2d", { alpha: false });
   if (!context) {
-    reportDiagnosticError(new Error("No se pudo crear el lienzo para exportar."));
+    reportDiagnosticError(new Error("Non se puido crear o lenzo para exportar."));
     return;
   }
   isExporting = true;
@@ -589,7 +589,7 @@ async function downloadSelectedPages() {
   try {
     for (let index = 0; index < pages.length; index++) {
       const pageNumber = pages[index];
-      setOptionalText(elements.exportProgressText, `Generando página ${index + 1} de ${pages.length}…`);
+      setOptionalText(elements.exportProgressText, `Xerando páxina ${index + 1} de ${pages.length}…`);
       let page = null;
       let objectUrl = null;
 
@@ -612,7 +612,7 @@ async function downloadSelectedPages() {
         const paddedPage = String(pageNumber).padStart(pageNumberWidth, "0");
         objectUrl = downloadBlob(blob, `${documentBaseName}-pagina-${paddedPage}.jpg`);
         if (elements.exportProgressBar) elements.exportProgressBar.value = index + 1;
-        setOptionalText(elements.exportProgressText, `Descargada ${index + 1} de ${pages.length}`);
+        setOptionalText(elements.exportProgressText, `Gardada ${index + 1} de ${pages.length}`);
         await waitForDownload();
       } finally {
         if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -621,7 +621,7 @@ async function downloadSelectedPages() {
         exportCanvas.height = 1;
       }
     }
-    setOptionalText(elements.exportProgressText, `${pages.length} ${pages.length === 1 ? "imagen descargada" : "imágenes descargadas"}`);
+    setOptionalText(elements.exportProgressText, "Imaxes gardadas correctamente.");
   } catch (error) {
     console.error(error);
     reportDiagnosticError(error);
@@ -685,7 +685,7 @@ async function returnHome() {
 }
 
 elements.fileInput.addEventListener("change", (event) => {
-  setOptionalText(elements.diagnosticChange, `Disparado (${new Date().toLocaleTimeString("es-ES")})`);
+  setOptionalText(elements.diagnosticChange, `Disparado (${new Date().toLocaleTimeString("gl-ES")})`);
   const [file] = event.target.files;
   event.target.value = "";
   openPdf(file);
