@@ -713,7 +713,7 @@ function createPreparedItem(pageNumber, index) {
   item.innerHTML = `
     <div class="prepare-preview">
       <span class="prepare-number">${index + 1}</span>
-      <span class="prepare-placeholder">Preparando…</span>
+      <span class="prepare-placeholder" role="status">Cargando miniatura…</span>
       <span class="prepare-page-label">Páxina ${pageNumber}</span>
     </div>
     <div class="prepare-item-controls">
@@ -785,6 +785,7 @@ async function renderPreparedThumbnail(pageNumber, sequence) {
       image.src = url;
       image.alt = `Páxina ${pageNumber}`;
       item.querySelector(".prepare-placeholder")?.replaceWith(image);
+      item.classList.add("is-thumbnail-loaded");
       thumbnailObserver?.unobserve(item);
     }
   } catch (error) {
@@ -792,6 +793,13 @@ async function renderPreparedThumbnail(pageNumber, sequence) {
       console.error(error);
       reportDiagnosticError(error);
       setOptionalText(elements.prepareProgressText, "Non se puido cargar unha miniatura.");
+      const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
+      const placeholder = item?.querySelector(".prepare-placeholder");
+      if (placeholder) {
+        placeholder.textContent = "Non se puido cargar a miniatura.";
+        placeholder.classList.add("is-error");
+      }
+      if (item) thumbnailObserver?.unobserve(item);
     }
   } finally {
     if (thumbnailRenderTasks.get(pageNumber) === task) thumbnailRenderTasks.delete(pageNumber);
