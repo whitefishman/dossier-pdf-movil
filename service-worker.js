@@ -1,4 +1,4 @@
-const CACHE_NAME = "dossier-pdf-v7";
+const CACHE_NAME = "dossier-pdf-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
