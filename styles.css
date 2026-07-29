@@ -77,8 +77,9 @@ h1 em { color: var(--accent); font-weight: 400; }
 .document-info { min-width: 0; text-align: center; }
 .document-info strong { display: block; overflow: hidden; font-family: Georgia, serif; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .document-info span { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .18em; }
-.page-stage { position: relative; flex: 1 1 auto; display: grid; place-items: center; min-height: 0; padding: 8px; overflow: hidden; touch-action: pan-y; }
+.page-stage { position: relative; flex: 1 1 auto; display: grid; place-items: center; min-height: 0; padding: 8px; overflow: hidden; touch-action: none; }
 .page-wrap { display: grid; place-items: center; max-width: 100%; max-height: 100%; border: 3px solid transparent; background: white; filter: drop-shadow(0 5px 10px rgba(35, 37, 32, .13)); transition: transform .2s ease, opacity .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.page-wrap.is-zoomed { transition: none; will-change: transform; }
 .page-wrap.is-selected { border-color: #2477e8; box-shadow: 0 0 0 3px rgba(36, 119, 232, .18); }
 .page-wrap.turn-left { transform: translateX(-35px); opacity: 0; }
 .page-wrap.turn-right { transform: translateX(35px); opacity: 0; }

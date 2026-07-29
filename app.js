@@ -53,6 +53,20 @@ let renderedPageNumber = null;
 const adjacentPageCache = new Map();
 let touchStartX = 0;
 let touchStartY = 0;
+let zoomScale = 1;
+let panX = 0;
+let panY = 0;
+let touchMode = null;
+let touchStartPanX = 0;
+let touchStartPanY = 0;
+let pinchStartDistance = 0;
+let pinchStartScale = 1;
+let pinchAnchorX = 0;
+let pinchAnchorY = 0;
+let suppressTap = false;
+let lastTapTime = 0;
+let lastTapX = 0;
+let lastTapY = 0;
 let selectedPages = new Set();
 let fileLoadSequence = 0;
 let documentBaseName = "documento";
@@ -204,6 +218,7 @@ function discardSavedSession() {
 
 async function restoreSavedSession() {
   if (!pdfDocument || !pendingSession) return;
+  resetZoom();
   currentPage = Math.min(Math.max(pendingSession.currentPage, 1), pdfDocument.numPages);
   selectedPages = new Set(pendingSession.selectedPages.filter((page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages));
   pendingSession = null;
@@ -214,6 +229,7 @@ async function restoreSavedSession() {
 
 async function startFreshSession() {
   if (!pdfDocument) return;
+  resetZoom();
   pendingSession = null;
   discardSavedSession();
   currentPage = 1;
@@ -244,6 +260,87 @@ function showReader(fileName) {
   elements.name.textContent = fileName.replace(/\.pdf$/i, "") || "Documento";
   elements.welcome.hidden = true;
   elements.reader.hidden = false;
+}
+
+function isZoomed() {
+  return zoomScale > 1.001;
+}
+
+function getTouchDistance(firstTouch, secondTouch) {
+  return Math.hypot(secondTouch.clientX - firstTouch.clientX, secondTouch.clientY - firstTouch.clientY);
+}
+
+function getTouchMidpoint(firstTouch, secondTouch) {
+  return {
+    x: (firstTouch.clientX + secondTouch.clientX) / 2,
+    y: (firstTouch.clientY + secondTouch.clientY) / 2,
+  };
+}
+
+function clampPan() {
+  if (!isZoomed()) {
+    panX = 0;
+    panY = 0;
+    return;
+  }
+  const maxPanX = Math.max(0, (elements.wrap.offsetWidth * zoomScale - elements.stage.clientWidth) / 2);
+  const maxPanY = Math.max(0, (elements.wrap.offsetHeight * zoomScale - elements.stage.clientHeight) / 2);
+  panX = Math.min(Math.max(panX, -maxPanX), maxPanX);
+  panY = Math.min(Math.max(panY, -maxPanY), maxPanY);
+}
+
+function applyZoomTransform() {
+  clampPan();
+  const zoomed = isZoomed();
+  elements.wrap.classList.toggle("is-zoomed", zoomed);
+  elements.wrap.style.transform = zoomed ? `translate3d(${panX}px, ${panY}px, 0) scale(${zoomScale})` : "";
+}
+
+function resetZoom() {
+  zoomScale = 1;
+  panX = 0;
+  panY = 0;
+  touchMode = null;
+  suppressTap = false;
+  applyZoomTransform();
+}
+
+function beginPinch(firstTouch, secondTouch) {
+  const midpoint = getTouchMidpoint(firstTouch, secondTouch);
+  const stageRect = elements.stage.getBoundingClientRect();
+  const focalX = midpoint.x - (stageRect.left + stageRect.width / 2);
+  const focalY = midpoint.y - (stageRect.top + stageRect.height / 2);
+  touchMode = "pinch";
+  suppressTap = true;
+  pinchStartDistance = getTouchDistance(firstTouch, secondTouch) || 1;
+  pinchStartScale = zoomScale;
+  pinchAnchorX = (focalX - panX) / zoomScale;
+  pinchAnchorY = (focalY - panY) / zoomScale;
+}
+
+function zoomAroundPoint(nextScale, clientX, clientY) {
+  const stageRect = elements.stage.getBoundingClientRect();
+  const focalX = clientX - (stageRect.left + stageRect.width / 2);
+  const focalY = clientY - (stageRect.top + stageRect.height / 2);
+  const contentX = (focalX - panX) / zoomScale;
+  const contentY = (focalY - panY) / zoomScale;
+  zoomScale = Math.min(4, Math.max(1, nextScale));
+  panX = focalX - contentX * zoomScale;
+  panY = focalY - contentY * zoomScale;
+  applyZoomTransform();
+}
+
+function handleTap(clientX, clientY) {
+  const now = Date.now();
+  const isDoubleTap = now - lastTapTime < 300 && Math.hypot(clientX - lastTapX, clientY - lastTapY) < 32;
+  if (isDoubleTap) {
+    zoomAroundPoint(isZoomed() ? 1 : 2, clientX, clientY);
+    lastTapTime = 0;
+    return;
+  }
+  lastTapTime = now;
+  lastTapX = clientX;
+  lastTapY = clientY;
 }
 
 function getPageViewport(page) {
@@ -368,6 +465,7 @@ async function renderPage(direction = 0) {
       renderTask = null;
     }
     renderedPageNumber = currentPage;
+    if (isZoomed()) applyZoomTransform();
     pruneAdjacentPageCache();
     elements.current.textContent = currentPage;
     updateControls();
@@ -391,6 +489,7 @@ function changePage(offset) {
   const nextPage = currentPage + offset;
   if (nextPage < 1 || nextPage > pdfDocument.numPages) return;
   cacheVisiblePage();
+  resetZoom();
   currentPage = nextPage;
   pruneAdjacentPageCache();
   saveCurrentSession();
@@ -553,6 +652,7 @@ function clearError() {
 
 async function closeDocument() {
   renderSequence++;
+  resetZoom();
   if (renderTask) {
     renderTask.cancel();
     renderTask = null;
@@ -619,17 +719,73 @@ elements.clearCache?.addEventListener("click", async () => {
 });
 
 elements.stage.addEventListener("touchstart", (event) => {
-  touchStartX = event.changedTouches[0].clientX;
-  touchStartY = event.changedTouches[0].clientY;
-}, { passive: true });
+  if (pendingSession) return;
+  if (event.touches.length >= 2) {
+    beginPinch(event.touches[0], event.touches[1]);
+    event.preventDefault();
+    return;
+  }
+  const [touch] = event.touches;
+  touchMode = "single";
+  suppressTap = false;
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+  touchStartPanX = panX;
+  touchStartPanY = panY;
+}, { passive: false });
+
+elements.stage.addEventListener("touchmove", (event) => {
+  if (event.touches.length >= 2) {
+    if (touchMode !== "pinch") beginPinch(event.touches[0], event.touches[1]);
+    const midpoint = getTouchMidpoint(event.touches[0], event.touches[1]);
+    const stageRect = elements.stage.getBoundingClientRect();
+    const focalX = midpoint.x - (stageRect.left + stageRect.width / 2);
+    const focalY = midpoint.y - (stageRect.top + stageRect.height / 2);
+    zoomScale = Math.min(4, Math.max(1, pinchStartScale * getTouchDistance(event.touches[0], event.touches[1]) / pinchStartDistance));
+    panX = focalX - pinchAnchorX * zoomScale;
+    panY = focalY - pinchAnchorY * zoomScale;
+    applyZoomTransform();
+    event.preventDefault();
+    return;
+  }
+  if (event.touches.length === 1 && touchMode === "single" && isZoomed()) {
+    const [touch] = event.touches;
+    panX = touchStartPanX + touch.clientX - touchStartX;
+    panY = touchStartPanY + touch.clientY - touchStartY;
+    applyZoomTransform();
+    event.preventDefault();
+  }
+}, { passive: false });
 
 elements.stage.addEventListener("touchend", (event) => {
-  const deltaX = event.changedTouches[0].clientX - touchStartX;
-  const deltaY = event.changedTouches[0].clientY - touchStartY;
-  if (Math.abs(deltaX) > 55 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+  if (event.touches.length === 1) {
+    const [touch] = event.touches;
+    touchMode = "single";
+    suppressTap = true;
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    touchStartPanX = panX;
+    touchStartPanY = panY;
+    return;
+  }
+
+  const [touch] = event.changedTouches;
+  const deltaX = touch.clientX - touchStartX;
+  const deltaY = touch.clientY - touchStartY;
+  const wasSingleTouch = touchMode === "single";
+  if (wasSingleTouch && !suppressTap && Math.hypot(deltaX, deltaY) < 12) {
+    handleTap(touch.clientX, touch.clientY);
+  } else if (wasSingleTouch && !isZoomed() && Math.abs(deltaX) > 55 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
     changePage(deltaX < 0 ? 1 : -1);
   }
-}, { passive: true });
+  touchMode = null;
+  suppressTap = false;
+}, { passive: false });
+
+elements.stage.addEventListener("touchcancel", () => {
+  touchMode = null;
+  suppressTap = false;
+});
 
 window.addEventListener("keydown", (event) => {
   if (elements.reader.hidden) return;
