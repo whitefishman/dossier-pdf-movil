@@ -63,6 +63,7 @@
           <div id="page-wrap" class="page-wrap">
             <canvas id="pdf-canvas" aria-label="Páxina do documento"></canvas>
           </div>
+          <span id="first-page-status" class="first-page-status" hidden>Primeira do envío</span>
           <div id="error-message" class="error-message" role="alert" aria-live="assertive" hidden>
             <strong>Non se puido abrir o documento</strong>
             <span id="error-detail"></span>
@@ -93,6 +94,9 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
             </button>
           </div>
+          <button id="select-first" class="select-first-button" type="button" aria-pressed="false">
+            Seleccionar como primeira
+          </button>
           <button id="download-selected" class="download-button" type="button" disabled>
             Non hai páxinas seleccionadas.
           </button>

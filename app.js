@@ -19,6 +19,8 @@ const elements = {
   errorDetail: document.querySelector("#error-detail"),
   selectAndContinue: document.querySelector("#select-and-continue"),
   selectionActionLabel: document.querySelector("#selection-action-label"),
+  selectFirst: document.querySelector("#select-first"),
+  firstPageStatus: document.querySelector("#first-page-status"),
   continue: document.querySelector("#continue"),
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
@@ -520,6 +522,14 @@ function selectAndContinue() {
   if (currentPage < pdfDocument.numPages) changePage(1);
 }
 
+function selectAsFirst() {
+  if (!pdfDocument || pendingSession || isExporting) return;
+  selectedPages = new Set([currentPage, ...[...selectedPages].filter((pageNumber) => pageNumber !== currentPage)]);
+  updateSelectionCount();
+  updateSelectedState();
+  saveCurrentSession();
+}
+
 function updateSelectionCount() {
   elements.selectedCount.textContent = selectedPages.size;
   const count = selectedPages.size;
@@ -531,10 +541,14 @@ function updateSelectionCount() {
 
 function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
+  const isFirst = isSelected && selectedPages.values().next().value === currentPage;
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
   elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar e continuar" : "Seleccionar e continuar";
+  elements.selectFirst.classList.toggle("is-first", isFirst);
+  elements.selectFirst.setAttribute("aria-pressed", String(isFirst));
+  elements.firstPageStatus.hidden = !isFirst;
 }
 
 function animatePage(direction) {
@@ -547,6 +561,7 @@ function animatePage(direction) {
 function updateControls() {
   elements.continue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument || currentPage >= pdfDocument.numPages;
   elements.selectAndContinue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
+  elements.selectFirst.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
   if (elements.downloadSelected) {
     elements.downloadSelected.disabled = isExporting || !pdfDocument || selectedPages.size === 0;
   }
@@ -884,6 +899,7 @@ elements.fileInput.addEventListener("change", (event) => {
 });
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
+elements.selectFirst.addEventListener("click", selectAsFirst);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
 elements.backToReader.addEventListener("click", closePrepareSend);
