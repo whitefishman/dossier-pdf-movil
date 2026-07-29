@@ -48,6 +48,9 @@ let pdfDocument = null;
 let currentPage = 1;
 let renderTask = null;
 let renderSequence = 0;
+let preloadTask = null;
+let renderedPageNumber = null;
+const adjacentPageCache = new Map();
 let touchStartX = 0;
 let touchStartY = 0;
 let selectedPages = new Set();
@@ -243,6 +246,94 @@ function showReader(fileName) {
   elements.reader.hidden = false;
 }
 
+function getPageViewport(page) {
+  const baseViewport = page.getViewport({ scale: 1 });
+  const stageStyles = getComputedStyle(elements.stage);
+  const availableWidth = elements.stage.clientWidth - parseFloat(stageStyles.paddingLeft) - parseFloat(stageStyles.paddingRight);
+  const availableHeight = elements.stage.clientHeight - parseFloat(stageStyles.paddingTop) - parseFloat(stageStyles.paddingBottom);
+  const displayScale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  return {
+    pixelRatio,
+    viewport: page.getViewport({ scale: displayScale * pixelRatio }),
+  };
+}
+
+function releaseCachedPage(cachedPage) {
+  cachedPage.canvas.width = 1;
+  cachedPage.canvas.height = 1;
+}
+
+function clearAdjacentPageCache() {
+  for (const cachedPage of adjacentPageCache.values()) releaseCachedPage(cachedPage);
+  adjacentPageCache.clear();
+}
+
+function pruneAdjacentPageCache() {
+  for (const [pageNumber, cachedPage] of adjacentPageCache) {
+    if (Math.abs(pageNumber - currentPage) > 1) {
+      releaseCachedPage(cachedPage);
+      adjacentPageCache.delete(pageNumber);
+    }
+  }
+}
+
+function cacheVisiblePage() {
+  if (renderedPageNumber !== currentPage || !elements.canvas.width || adjacentPageCache.has(currentPage)) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = elements.canvas.width;
+  canvas.height = elements.canvas.height;
+  canvas.getContext("2d").drawImage(elements.canvas, 0, 0);
+  adjacentPageCache.set(currentPage, {
+    canvas,
+    cssWidth: elements.canvas.style.width,
+    cssHeight: elements.canvas.style.height,
+  });
+}
+
+function showCachedPage(cachedPage) {
+  elements.canvas.width = cachedPage.canvas.width;
+  elements.canvas.height = cachedPage.canvas.height;
+  elements.canvas.style.width = cachedPage.cssWidth;
+  elements.canvas.style.height = cachedPage.cssHeight;
+  elements.canvas.getContext("2d").drawImage(cachedPage.canvas, 0, 0);
+  releaseCachedPage(cachedPage);
+}
+
+async function preloadAdjacentPages(sequence) {
+  for (const pageNumber of [currentPage - 1, currentPage + 1]) {
+    if (sequence !== renderSequence || !pdfDocument || pageNumber < 1 || pageNumber > pdfDocument.numPages || adjacentPageCache.has(pageNumber)) continue;
+
+    let page = null;
+    let task = null;
+    const canvas = document.createElement("canvas");
+    try {
+      page = await pdfDocument.getPage(pageNumber);
+      if (sequence !== renderSequence) return;
+      const { pixelRatio, viewport } = getPageViewport(page);
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      task = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+      preloadTask = task;
+      await task.promise;
+      if (preloadTask === task) preloadTask = null;
+      if (sequence !== renderSequence) return;
+      adjacentPageCache.set(pageNumber, {
+        canvas,
+        cssWidth: `${Math.floor(viewport.width / pixelRatio)}px`,
+        cssHeight: `${Math.floor(viewport.height / pixelRatio)}px`,
+      });
+      pruneAdjacentPageCache();
+    } catch (error) {
+      if (error?.name !== "RenderingCancelledException") console.warn("No se pudo precargar una página adyacente.", error);
+    } finally {
+      if (preloadTask === task) preloadTask = null;
+      page?.cleanup();
+      if (!adjacentPageCache.has(pageNumber)) releaseCachedPage({ canvas });
+    }
+  }
+}
+
 async function renderPage(direction = 0) {
   if (!pdfDocument) return;
   const sequence = ++renderSequence;
@@ -253,31 +344,36 @@ async function renderPage(direction = 0) {
     renderTask.cancel();
     renderTask = null;
   }
+  if (preloadTask) {
+    preloadTask.cancel();
+    preloadTask = null;
+  }
 
+  let page = null;
   try {
-    const page = await pdfDocument.getPage(currentPage);
-    if (sequence !== renderSequence) return;
-
-    const baseViewport = page.getViewport({ scale: 1 });
-    const stageStyles = getComputedStyle(elements.stage);
-    const availableWidth = elements.stage.clientWidth - parseFloat(stageStyles.paddingLeft) - parseFloat(stageStyles.paddingRight);
-    const availableHeight = elements.stage.clientHeight - parseFloat(stageStyles.paddingTop) - parseFloat(stageStyles.paddingBottom);
-    const displayScale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    const viewport = page.getViewport({ scale: displayScale * pixelRatio });
-
-    elements.canvas.width = Math.floor(viewport.width);
-    elements.canvas.height = Math.floor(viewport.height);
-    elements.canvas.style.width = `${Math.floor(viewport.width / pixelRatio)}px`;
-    elements.canvas.style.height = `${Math.floor(viewport.height / pixelRatio)}px`;
-
-    renderTask = page.render({ canvasContext: elements.canvas.getContext("2d"), viewport });
-    await renderTask.promise;
-    renderTask = null;
+    const cachedPage = adjacentPageCache.get(currentPage);
+    if (cachedPage) {
+      adjacentPageCache.delete(currentPage);
+      showCachedPage(cachedPage);
+    } else {
+      page = await pdfDocument.getPage(currentPage);
+      if (sequence !== renderSequence) return;
+      const { pixelRatio, viewport } = getPageViewport(page);
+      elements.canvas.width = Math.floor(viewport.width);
+      elements.canvas.height = Math.floor(viewport.height);
+      elements.canvas.style.width = `${Math.floor(viewport.width / pixelRatio)}px`;
+      elements.canvas.style.height = `${Math.floor(viewport.height / pixelRatio)}px`;
+      renderTask = page.render({ canvasContext: elements.canvas.getContext("2d"), viewport });
+      await renderTask.promise;
+      renderTask = null;
+    }
+    renderedPageNumber = currentPage;
+    pruneAdjacentPageCache();
     elements.current.textContent = currentPage;
     updateControls();
     updateSelectedState();
     animatePage(direction);
+    preloadAdjacentPages(sequence);
   } catch (error) {
     if (error?.name !== "RenderingCancelledException") {
       console.error(error);
@@ -285,6 +381,7 @@ async function renderPage(direction = 0) {
       showError("Ha ocurrido un error al dibujar esta página.");
     }
   } finally {
+    page?.cleanup();
     if (sequence === renderSequence) setLoading(false);
   }
 }
@@ -293,7 +390,9 @@ function changePage(offset) {
   if (!pdfDocument || pendingSession) return;
   const nextPage = currentPage + offset;
   if (nextPage < 1 || nextPage > pdfDocument.numPages) return;
+  cacheVisiblePage();
   currentPage = nextPage;
+  pruneAdjacentPageCache();
   saveCurrentSession();
   renderPage(offset);
 }
@@ -458,6 +557,14 @@ async function closeDocument() {
     renderTask.cancel();
     renderTask = null;
   }
+  if (preloadTask) {
+    preloadTask.cancel();
+    preloadTask = null;
+  }
+  clearAdjacentPageCache();
+  renderedPageNumber = null;
+  elements.canvas.width = 1;
+  elements.canvas.height = 1;
   if (documentTask) {
     await documentTask.destroy();
     documentTask = null;
@@ -534,7 +641,11 @@ window.addEventListener("keydown", (event) => {
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => renderPage(), 150);
+  resizeTimer = setTimeout(() => {
+    clearAdjacentPageCache();
+    renderedPageNumber = null;
+    renderPage();
+  }, 150);
 });
 
 if ("serviceWorker" in navigator) {
