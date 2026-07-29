@@ -27,6 +27,13 @@ const elements = {
   exportProgress: document.querySelector("#export-progress"),
   exportProgressBar: document.querySelector("#export-progress-bar"),
   exportProgressText: document.querySelector("#export-progress-text"),
+  prepareSend: document.querySelector("#prepare-send"),
+  prepareGrid: document.querySelector("#prepare-grid"),
+  prepareProgress: document.querySelector("#prepare-progress"),
+  prepareProgressBar: document.querySelector("#prepare-progress-bar"),
+  prepareProgressText: document.querySelector("#prepare-progress-text"),
+  backToReader: document.querySelector("#back-to-reader"),
+  confirmDownload: document.querySelector("#confirm-download"),
   sessionRestore: document.querySelector("#session-restore"),
   restoreSession: document.querySelector("#restore-session"),
   discardSession: document.querySelector("#discard-session"),
@@ -73,6 +80,10 @@ let documentBaseName = "documento";
 let isExporting = false;
 let currentFileIdentity = null;
 let pendingSession = null;
+let preparedPages = [];
+let thumbnailSequence = 0;
+let thumbnailRenderTask = null;
+const thumbnailUrls = new Map();
 
 async function loadPdfJs() {
   if (pdfjsLib) {
@@ -201,7 +212,7 @@ function saveCurrentSession() {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
       fileIdentity: currentFileIdentity,
       currentPage,
-      selectedPages: [...selectedPages].sort((a, b) => a - b),
+      selectedPages: [...selectedPages],
     }));
   } catch {
     // Reading the PDF must continue even when storage is unavailable.
@@ -543,12 +554,12 @@ function updateControls() {
   elements.fileInput.disabled = isExporting;
 }
 
-function canvasToJpeg(canvas) {
+function canvasToJpeg(canvas, quality = 0.9) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
       else reject(new Error("Non se puido crear a imaxe JPG."));
-    }, "image/jpeg", 0.9);
+    }, "image/jpeg", quality);
   });
 }
 
@@ -567,11 +578,188 @@ function waitForDownload() {
   return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
-async function downloadSelectedPages() {
-  if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
+function disposeThumbnails() {
+  thumbnailSequence++;
+  if (thumbnailRenderTask) {
+    thumbnailRenderTask.cancel();
+    thumbnailRenderTask = null;
+  }
+  for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
+  thumbnailUrls.clear();
+}
 
-  const pages = [...selectedPages].sort((a, b) => a - b);
-  const pageNumberWidth = String(pdfDocument.numPages).length;
+function updatePreparedNumbers() {
+  [...elements.prepareGrid.querySelectorAll(".prepare-item")].forEach((item, index) => {
+    item.querySelector(".prepare-number").textContent = index + 1;
+  });
+}
+
+function syncPreparedOrder() {
+  preparedPages = [...elements.prepareGrid.querySelectorAll(".prepare-item")].map((item) => Number(item.dataset.page));
+  selectedPages = new Set(preparedPages);
+  updatePreparedNumbers();
+  updateSelectionCount();
+  saveCurrentSession();
+  elements.confirmDownload.disabled = preparedPages.length === 0 || isExporting;
+}
+
+function enableThumbnailDrag(item) {
+  let holdTimer = null;
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+
+  item.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".prepare-remove") || isExporting) return;
+    startX = event.clientX;
+    startY = event.clientY;
+    holdTimer = setTimeout(() => {
+      dragging = true;
+      item.classList.add("is-dragging");
+      item.setPointerCapture(event.pointerId);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 350);
+  });
+
+  item.addEventListener("pointermove", (event) => {
+    if (!dragging) {
+      if (Math.hypot(event.clientX - startX, event.clientY - startY) > 8) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      return;
+    }
+    event.preventDefault();
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".prepare-item");
+    if (!target || target === item || target.parentElement !== elements.prepareGrid) return;
+    const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+    const fromIndex = items.indexOf(item);
+    const targetIndex = items.indexOf(target);
+    if (fromIndex < targetIndex) target.after(item);
+    else elements.prepareGrid.insertBefore(item, target);
+    syncPreparedOrder();
+  });
+
+  const finishDrag = () => {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    if (dragging) syncPreparedOrder();
+    dragging = false;
+    item.classList.remove("is-dragging");
+  };
+  item.addEventListener("pointerup", finishDrag);
+  item.addEventListener("pointercancel", finishDrag);
+  item.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
+function createPreparedItem(pageNumber, index) {
+  const item = document.createElement("article");
+  item.className = "prepare-item";
+  item.dataset.page = pageNumber;
+  item.innerHTML = `
+    <span class="prepare-number">${index + 1}</span>
+    <span class="prepare-placeholder">Páxina ${pageNumber}</span>
+    <button class="prepare-remove" type="button" aria-label="Eliminar a páxina ${pageNumber}">×</button>
+  `;
+  item.querySelector(".prepare-remove").addEventListener("click", () => {
+    if (isExporting) return;
+    const url = thumbnailUrls.get(pageNumber);
+    if (url) URL.revokeObjectURL(url);
+    thumbnailUrls.delete(pageNumber);
+    item.remove();
+    syncPreparedOrder();
+    if (preparedPages.length === 0) {
+      elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
+    }
+  });
+  enableThumbnailDrag(item);
+  return item;
+}
+
+async function generatePreparedThumbnails() {
+  const sequence = ++thumbnailSequence;
+  const pages = [...preparedPages];
+  elements.prepareProgress.hidden = false;
+  elements.prepareProgressBar.max = pages.length;
+  elements.prepareProgressBar.value = 0;
+  setOptionalText(elements.prepareProgressText, "Preparando miniaturas…");
+
+  for (let index = 0; index < pages.length; index++) {
+    const pageNumber = pages[index];
+    let page = null;
+    let task = null;
+    const canvas = document.createElement("canvas");
+    try {
+      page = await pdfDocument.getPage(pageNumber);
+      if (sequence !== thumbnailSequence) return;
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(1, 240 / baseViewport.width, 320 / baseViewport.height);
+      const viewport = page.getViewport({ scale });
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      const context = canvas.getContext("2d", { alpha: false });
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      task = page.render({ canvasContext: context, viewport });
+      thumbnailRenderTask = task;
+      await task.promise;
+      if (thumbnailRenderTask === task) thumbnailRenderTask = null;
+      const blob = await canvasToJpeg(canvas, 0.75);
+      if (sequence !== thumbnailSequence || !preparedPages.includes(pageNumber)) continue;
+      const url = URL.createObjectURL(blob);
+      thumbnailUrls.set(pageNumber, url);
+      const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
+      if (item) {
+        const image = document.createElement("img");
+        image.src = url;
+        image.alt = `Páxina ${pageNumber}`;
+        item.querySelector(".prepare-placeholder")?.replaceWith(image);
+      }
+      elements.prepareProgressBar.value = index + 1;
+      setOptionalText(elements.prepareProgressText, `Miniatura ${index + 1} de ${pages.length}`);
+    } catch (error) {
+      if (error?.name !== "RenderingCancelledException") {
+        console.error(error);
+        reportDiagnosticError(error);
+        setOptionalText(elements.prepareProgressText, "Non se puideron preparar todas as miniaturas.");
+      }
+    } finally {
+      if (thumbnailRenderTask === task) thumbnailRenderTask = null;
+      page?.cleanup();
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+  }
+  if (sequence === thumbnailSequence) elements.prepareProgress.hidden = true;
+}
+
+function openPrepareSend() {
+  if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
+  disposeThumbnails();
+  preparedPages = [...selectedPages];
+  elements.prepareGrid.replaceChildren(...preparedPages.map(createPreparedItem));
+  elements.prepareProgress.hidden = true;
+  elements.confirmDownload.disabled = false;
+  elements.reader.hidden = true;
+  elements.prepareSend.hidden = false;
+  generatePreparedThumbnails();
+}
+
+function closePrepareSend() {
+  if (isExporting) return;
+  disposeThumbnails();
+  elements.prepareSend.hidden = true;
+  elements.reader.hidden = false;
+  elements.prepareProgress.hidden = true;
+  updateSelectionCount();
+  updateSelectedState();
+}
+
+async function downloadSelectedPages() {
+  if (!pdfDocument || preparedPages.length === 0 || isExporting) return;
+
+  const pages = [...preparedPages];
+  const orderWidth = Math.max(2, String(pages.length).length);
   const exportCanvas = document.createElement("canvas");
   const context = exportCanvas.getContext("2d", { alpha: false });
   if (!context) {
@@ -579,17 +767,17 @@ async function downloadSelectedPages() {
     return;
   }
   isExporting = true;
-  if (elements.exportProgress) elements.exportProgress.hidden = false;
-  if (elements.exportProgressBar) {
-    elements.exportProgressBar.max = pages.length;
-    elements.exportProgressBar.value = 0;
-  }
+  elements.prepareProgress.hidden = false;
+  elements.prepareProgressBar.max = pages.length;
+  elements.prepareProgressBar.value = 0;
+  elements.backToReader.disabled = true;
+  elements.confirmDownload.disabled = true;
   updateControls();
 
   try {
     for (let index = 0; index < pages.length; index++) {
       const pageNumber = pages[index];
-      setOptionalText(elements.exportProgressText, `Xerando páxina ${index + 1} de ${pages.length}…`);
+      setOptionalText(elements.prepareProgressText, `Xerando páxina ${index + 1} de ${pages.length}…`);
       let page = null;
       let objectUrl = null;
 
@@ -609,10 +797,10 @@ async function downloadSelectedPages() {
         await page.render({ canvasContext: context, viewport }).promise;
 
         const blob = await canvasToJpeg(exportCanvas);
-        const paddedPage = String(pageNumber).padStart(pageNumberWidth, "0");
-        objectUrl = downloadBlob(blob, `${documentBaseName}-pagina-${paddedPage}.jpg`);
-        if (elements.exportProgressBar) elements.exportProgressBar.value = index + 1;
-        setOptionalText(elements.exportProgressText, `Gardada ${index + 1} de ${pages.length}`);
+        const orderPrefix = String(index + 1).padStart(orderWidth, "0");
+        objectUrl = downloadBlob(blob, `${orderPrefix}_paxina-${pageNumber}.jpg`);
+        elements.prepareProgressBar.value = index + 1;
+        setOptionalText(elements.prepareProgressText, `Gardada ${index + 1} de ${pages.length}`);
         await waitForDownload();
       } finally {
         if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -621,15 +809,17 @@ async function downloadSelectedPages() {
         exportCanvas.height = 1;
       }
     }
-    setOptionalText(elements.exportProgressText, "Imaxes gardadas correctamente.");
+    setOptionalText(elements.prepareProgressText, "Imaxes gardadas correctamente.");
   } catch (error) {
     console.error(error);
     reportDiagnosticError(error);
-    setOptionalText(elements.exportProgressText, `Error: ${error?.message || String(error)}`);
+    setOptionalText(elements.prepareProgressText, `Error: ${error?.message || String(error)}`);
   } finally {
     exportCanvas.width = 1;
     exportCanvas.height = 1;
     isExporting = false;
+    elements.backToReader.disabled = false;
+    elements.confirmDownload.disabled = preparedPages.length === 0;
     updateControls();
   }
 }
@@ -653,6 +843,7 @@ function clearError() {
 async function closeDocument() {
   renderSequence++;
   resetZoom();
+  disposeThumbnails();
   if (renderTask) {
     renderTask.cancel();
     renderTask = null;
@@ -681,6 +872,7 @@ async function returnHome() {
   if (elements.sessionRestore) elements.sessionRestore.hidden = true;
   elements.fileInput.value = "";
   elements.reader.hidden = true;
+  elements.prepareSend.hidden = true;
   elements.welcome.hidden = false;
 }
 
@@ -693,7 +885,9 @@ elements.fileInput.addEventListener("change", (event) => {
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
-elements.downloadSelected?.addEventListener("click", downloadSelectedPages);
+elements.downloadSelected?.addEventListener("click", openPrepareSend);
+elements.backToReader.addEventListener("click", closePrepareSend);
+elements.confirmDownload.addEventListener("click", downloadSelectedPages);
 elements.restoreSession?.addEventListener("click", restoreSavedSession);
 elements.discardSession?.addEventListener("click", startFreshSession);
 elements.diagnosticsToggle?.addEventListener("click", () => {
