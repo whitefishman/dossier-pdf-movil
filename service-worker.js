@@ -1,10 +1,16 @@
-const CACHE_NAME = "dossier-pdf-v6";
+const CACHE_NAME = "dossier-pdf-v7";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./manifest.webmanifest",
-  "./icons/icon.svg",
+  "./icons/dossier-xa-icon.svg",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/apple-touch-icon.png",
+  "./icons/favicon.ico",
+  "./icons/favicon-32x32.png",
+  "./icons/favicon-16x16.png",
 ];
 
 self.addEventListener("install", (event) => {
