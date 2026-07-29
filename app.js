@@ -19,8 +19,9 @@ const elements = {
   errorDetail: document.querySelector("#error-detail"),
   selectAndContinue: document.querySelector("#select-and-continue"),
   selectionActionLabel: document.querySelector("#selection-action-label"),
-  selectFirst: document.querySelector("#select-first"),
-  firstPageStatus: document.querySelector("#first-page-status"),
+  selectFeatured: document.querySelector("#select-featured"),
+  selectFeaturedLabel: document.querySelector("#select-featured-label"),
+  selectionPositionStatus: document.querySelector("#selection-position-status"),
   continue: document.querySelector("#continue"),
   current: document.querySelector("#current-page"),
   total: document.querySelector("#total-pages"),
@@ -77,6 +78,7 @@ let lastTapTime = 0;
 let lastTapX = 0;
 let lastTapY = 0;
 let selectedPages = new Set();
+let featuredPages = [];
 let fileLoadSequence = 0;
 let documentBaseName = "documento";
 let isExporting = false;
@@ -148,6 +150,7 @@ async function openPdf(file) {
     setOptionalText(elements.diagnosticPages, String(pdfDocument.numPages));
     currentPage = 1;
     selectedPages = new Set();
+    featuredPages = [];
     currentFileIdentity = getFileIdentity(file, bytes);
     documentBaseName = getSafeFileName(file.name);
     if (elements.exportProgress) elements.exportProgress.hidden = true;
@@ -215,6 +218,7 @@ function saveCurrentSession() {
       fileIdentity: currentFileIdentity,
       currentPage,
       selectedPages: [...selectedPages],
+      featuredPages: [...featuredPages],
     }));
   } catch {
     // Reading the PDF must continue even when storage is unavailable.
@@ -233,7 +237,11 @@ async function restoreSavedSession() {
   if (!pdfDocument || !pendingSession) return;
   resetZoom();
   currentPage = Math.min(Math.max(pendingSession.currentPage, 1), pdfDocument.numPages);
-  selectedPages = new Set(pendingSession.selectedPages.filter((page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages));
+  const restoredPages = pendingSession.selectedPages.filter((page) => Number.isInteger(page) && page >= 1 && page <= pdfDocument.numPages);
+  const restoredPageSet = new Set(restoredPages);
+  featuredPages = (Array.isArray(pendingSession.featuredPages) ? pendingSession.featuredPages : [])
+    .filter((page, index, pages) => restoredPageSet.has(page) && pages.indexOf(page) === index);
+  selectedPages = new Set([...featuredPages, ...restoredPages.filter((page) => !featuredPages.includes(page))]);
   pendingSession = null;
   if (elements.sessionRestore) elements.sessionRestore.hidden = true;
   updateSelectionCount();
@@ -247,6 +255,7 @@ async function startFreshSession() {
   discardSavedSession();
   currentPage = 1;
   selectedPages = new Set();
+  featuredPages = [];
   if (elements.sessionRestore) elements.sessionRestore.hidden = true;
   updateSelectionCount();
   await renderPage();
@@ -513,6 +522,7 @@ function selectAndContinue() {
   if (!pdfDocument || pendingSession) return;
   if (selectedPages.has(currentPage)) {
     selectedPages.delete(currentPage);
+    featuredPages = featuredPages.filter((pageNumber) => pageNumber !== currentPage);
   } else {
     selectedPages.add(currentPage);
   }
@@ -522,9 +532,22 @@ function selectAndContinue() {
   if (currentPage < pdfDocument.numPages) changePage(1);
 }
 
-function selectAsFirst() {
+function getFeaturedOrdinal(position) {
+  const ordinals = ["primeira", "segunda", "terceira", "cuarta"];
+  return ordinals[position - 1] || `${position}ª`;
+}
+
+function toggleFeaturedSelection() {
   if (!pdfDocument || pendingSession || isExporting) return;
-  selectedPages = new Set([currentPage, ...[...selectedPages].filter((pageNumber) => pageNumber !== currentPage)]);
+  const featuredIndex = featuredPages.indexOf(currentPage);
+  if (featuredIndex >= 0) {
+    featuredPages.splice(featuredIndex, 1);
+    selectedPages.delete(currentPage);
+  } else {
+    featuredPages.push(currentPage);
+    selectedPages.delete(currentPage);
+    selectedPages = new Set([...featuredPages, ...selectedPages]);
+  }
   updateSelectionCount();
   updateSelectedState();
   saveCurrentSession();
@@ -541,14 +564,18 @@ function updateSelectionCount() {
 
 function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
-  const isFirst = isSelected && selectedPages.values().next().value === currentPage;
+  const featuredIndex = featuredPages.indexOf(currentPage);
+  const isFeatured = featuredIndex >= 0;
+  const selectedPosition = [...selectedPages].indexOf(currentPage) + 1;
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
   elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar e continuar" : "Seleccionar e continuar";
-  elements.selectFirst.classList.toggle("is-first", isFirst);
-  elements.selectFirst.setAttribute("aria-pressed", String(isFirst));
-  elements.firstPageStatus.hidden = !isFirst;
+  elements.selectFeatured.classList.toggle("is-featured", isFeatured);
+  elements.selectFeatured.setAttribute("aria-pressed", String(isFeatured));
+  elements.selectFeaturedLabel.textContent = isFeatured ? "Deseleccionar" : `Seleccionar como ${getFeaturedOrdinal(featuredPages.length + 1)}`;
+  elements.selectionPositionStatus.textContent = isSelected ? `Seleccionada como ${selectedPosition}ª` : "";
+  elements.selectionPositionStatus.hidden = !isSelected;
 }
 
 function animatePage(direction) {
@@ -561,7 +588,7 @@ function animatePage(direction) {
 function updateControls() {
   elements.continue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument || currentPage >= pdfDocument.numPages;
   elements.selectAndContinue.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
-  elements.selectFirst.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
+  elements.selectFeatured.disabled = isExporting || Boolean(pendingSession) || !pdfDocument;
   if (elements.downloadSelected) {
     elements.downloadSelected.disabled = isExporting || !pdfDocument || selectedPages.size === 0;
   }
@@ -610,7 +637,13 @@ function updatePreparedNumbers() {
 }
 
 function syncPreparedOrder() {
-  preparedPages = [...elements.prepareGrid.querySelectorAll(".prepare-item")].map((item) => Number(item.dataset.page));
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  const visibleOrder = items.map((item) => Number(item.dataset.page));
+  const featuredSet = new Set(featuredPages);
+  featuredPages = visibleOrder.filter((pageNumber) => featuredSet.has(pageNumber));
+  preparedPages = [...featuredPages, ...visibleOrder.filter((pageNumber) => !featuredSet.has(pageNumber))];
+  const itemsByPage = new Map(items.map((item) => [Number(item.dataset.page), item]));
+  for (const pageNumber of preparedPages) elements.prepareGrid.append(itemsByPage.get(pageNumber));
   selectedPages = new Set(preparedPages);
   updatePreparedNumbers();
   updateSelectionCount();
@@ -899,7 +932,7 @@ elements.fileInput.addEventListener("change", (event) => {
 });
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
-elements.selectFirst.addEventListener("click", selectAsFirst);
+elements.selectFeatured.addEventListener("click", toggleFeaturedSelection);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
 elements.backToReader.addEventListener("click", closePrepareSend);

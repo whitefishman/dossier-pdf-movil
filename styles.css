@@ -78,7 +78,7 @@ h1 em { color: var(--accent); font-weight: 700; }
 .page-wrap { display: grid; place-items: center; max-width: 100%; max-height: 100%; border: 3px solid transparent; background: white; filter: drop-shadow(0 5px 10px rgba(35, 37, 32, .13)); transition: transform .2s ease, opacity .2s ease, border-color .2s ease, box-shadow .2s ease; }
 .page-wrap.is-zoomed { transition: none; will-change: transform; }
 .page-wrap.is-selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 123, 196, .18); }
-.first-page-status { position: absolute; z-index: 3; top: 14px; left: 14px; padding: 6px 9px; color: white; background: var(--accent); border-radius: 999px; font-size: 11px; font-weight: 800; box-shadow: 0 3px 10px rgba(17, 17, 17, .12); }
+.selection-position-status { position: absolute; z-index: 3; top: 14px; left: 14px; padding: 6px 9px; color: white; background: var(--accent); border-radius: 999px; font-size: 11px; font-weight: 800; box-shadow: 0 3px 10px rgba(17, 17, 17, .12); }
 .page-wrap.turn-left { transform: translateX(-35px); opacity: 0; }
 .page-wrap.turn-right { transform: translateX(35px); opacity: 0; }
 #pdf-canvas { display: block; max-width: 100%; max-height: 100%; background: white; }
@@ -111,9 +111,9 @@ h1 em { color: var(--accent); font-weight: 700; }
 .action-button-primary.is-selected { background: var(--accent); }
 .action-button-secondary { color: white; background: var(--green); }
 .action-button:disabled { opacity: .4; cursor: default; }
-.select-first-button { width: 100%; min-height: 40px; margin-top: 9px; border: 1px solid var(--accent); color: var(--accent); background: white; border-radius: 6px; font-size: 12px; font-weight: 750; cursor: pointer; }
-.select-first-button.is-first { color: white; background: var(--accent); }
-.select-first-button:disabled { opacity: .4; cursor: default; }
+.select-featured-button { width: 100%; min-height: 40px; margin-top: 9px; border: 1px solid var(--accent); color: var(--accent); background: white; border-radius: 6px; font-size: 12px; font-weight: 750; cursor: pointer; }
+.select-featured-button.is-featured { color: white; background: var(--accent); }
+.select-featured-button:disabled { opacity: .4; cursor: default; }
 .download-button { width: 100%; min-height: 42px; margin-top: 9px; border: 1px solid var(--accent); color: white; background: var(--accent); border-radius: 6px; font-size: 12px; font-weight: 750; cursor: pointer; }
 .download-button:disabled { opacity: .4; cursor: default; }
 .export-progress { display: grid; grid-template-columns: minmax(90px, 1fr) auto; align-items: center; gap: 9px; margin-top: 8px; color: var(--muted); font-size: 11px; }
