@@ -1,8 +1,9 @@
-const CACHE_NAME = "dossier-pdf-v12";
+const CACHE_NAME = "dossier-pdf-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css",
+  "./styles.css?v=13",
+  "./app.js?v=13",
   "./manifest.webmanifest",
   "./icons/dossier-xa-icon.svg",
   "./icons/icon-192.png",
@@ -28,14 +29,19 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
-  if (url.pathname.endsWith("/app.js") || url.pathname.endsWith(".mjs")) return;
-  event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
+  if (url.pathname.endsWith(".mjs")) return;
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(event.request);
       if (response.ok || response.type === "opaque") {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(event.request, response.clone());
       }
       return response;
-    })),
-  );
+    } catch (error) {
+      const cached = await caches.match(event.request);
+      if (cached) return cached;
+      throw error;
+    }
+  })());
 });

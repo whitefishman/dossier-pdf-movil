@@ -2,8 +2,8 @@ const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
 const MAX_CONCURRENT_THUMBNAILS = 2;
-const THUMBNAIL_MAX_WIDTH = 160;
-const THUMBNAIL_MAX_HEIGHT = 220;
+const THUMBNAIL_MAX_WIDTH = 320;
+const THUMBNAIL_MAX_HEIGHT = 440;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -854,8 +854,11 @@ function enqueueThumbnail(pageNumber, sequence) {
 function observePreparedThumbnails() {
   const sequence = ++thumbnailSequence;
   const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  // The first viewport must never depend on IntersectionObserver: enqueue its
+  // four cards immediately and use the observer only to lazy-load the rest.
+  items.slice(0, 4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
   if (!("IntersectionObserver" in window)) {
-    items.slice(0, 8).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
+    items.slice(4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
     return;
   }
   thumbnailObserver = new IntersectionObserver((entries) => {
@@ -863,7 +866,7 @@ function observePreparedThumbnails() {
       if (entry.isIntersecting) enqueueThumbnail(Number(entry.target.dataset.page), sequence);
     }
   }, { root: elements.prepareGrid, rootMargin: "300px 0px", threshold: 0.01 });
-  items.forEach((item) => thumbnailObserver.observe(item));
+  items.slice(4).forEach((item) => thumbnailObserver.observe(item));
 }
 
 function openPrepareSend() {
