@@ -2,8 +2,8 @@ const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
 const MAX_CONCURRENT_THUMBNAILS = 2;
-const THUMBNAIL_MAX_WIDTH = 160;
-const THUMBNAIL_MAX_HEIGHT = 220;
+const THUMBNAIL_MAX_WIDTH = 320;
+const THUMBNAIL_MAX_HEIGHT = 440;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -40,10 +40,6 @@ const elements = {
   prepareProgressText: document.querySelector("#prepare-progress-text"),
   backToReader: document.querySelector("#back-to-reader"),
   confirmDownload: document.querySelector("#confirm-download"),
-  thumbnailViewer: document.querySelector("#thumbnail-viewer"),
-  thumbnailViewerTitle: document.querySelector("#thumbnail-viewer-title"),
-  thumbnailViewerImage: document.querySelector("#thumbnail-viewer-image"),
-  closeThumbnailViewer: document.querySelector("#close-thumbnail-viewer"),
   sessionRestore: document.querySelector("#session-restore"),
   restoreSession: document.querySelector("#restore-session"),
   discardSession: document.querySelector("#discard-session"),
@@ -703,26 +699,44 @@ function movePreparedItem(item, action) {
   syncPreparedOrder(Math.min(index, nextIndex), Math.max(index, nextIndex));
 }
 
+function togglePreparedItem(item) {
+  const controls = item.querySelector(".prepare-item-controls");
+  const toggle = item.querySelector(".prepare-card-toggle");
+  const willExpand = controls.hidden;
+
+  for (const expandedItem of elements.prepareGrid.querySelectorAll(".prepare-item.is-expanded")) {
+    expandedItem.classList.remove("is-expanded");
+    expandedItem.querySelector(".prepare-item-controls").hidden = true;
+    expandedItem.querySelector(".prepare-card-toggle").setAttribute("aria-expanded", "false");
+  }
+
+  controls.hidden = !willExpand;
+  item.classList.toggle("is-expanded", willExpand);
+  toggle.setAttribute("aria-expanded", String(willExpand));
+}
+
 function createPreparedItem(pageNumber, index) {
   const item = document.createElement("article");
   item.className = "prepare-item";
   item.dataset.page = pageNumber;
   item.innerHTML = `
-    <div class="prepare-meta">
-      <span class="prepare-number" aria-label="Posición de envío ${index + 1}">${index + 1}</span>
-      <span class="prepare-page-label">Páxina ${pageNumber}</span>
-    </div>
-    <button class="prepare-preview" type="button" aria-label="Ampliar páxina ${pageNumber}">
-      <span class="prepare-placeholder" role="status">Cargando miniatura…</span>
+    <button class="prepare-card-toggle" type="button" aria-label="Mostrar controis da páxina ${pageNumber}" aria-expanded="false">
+      <span class="prepare-meta">
+        <span class="prepare-number" aria-label="Posición de envío ${index + 1}">${index + 1}</span>
+        <span class="prepare-page-label">Páxina ${pageNumber}</span>
+      </span>
+      <span class="prepare-preview">
+        <span class="prepare-placeholder" role="status">Cargando miniatura…</span>
+      </span>
     </button>
-    <div class="prepare-item-controls">
-      <button type="button" data-action="up" aria-label="Subir páxina ${pageNumber}" title="Subir">↑</button>
-      <button type="button" data-action="down" aria-label="Baixar páxina ${pageNumber}" title="Baixar">↓</button>
-      <button type="button" data-action="first" aria-label="Mover páxina ${pageNumber} ao primeiro posto" title="Mover ao primeiro posto">⇈</button>
-      <button type="button" data-action="remove" aria-label="Eliminar páxina ${pageNumber}" title="Eliminar">×</button>
+    <div class="prepare-item-controls" hidden>
+      <button type="button" data-action="up" aria-label="Subir páxina ${pageNumber}">Subir</button>
+      <button type="button" data-action="first" aria-label="Mover páxina ${pageNumber} ao primeiro posto">Primeira</button>
+      <button type="button" data-action="down" aria-label="Baixar páxina ${pageNumber}">Baixar</button>
+      <button type="button" data-action="remove" aria-label="Eliminar páxina ${pageNumber}">Eliminar</button>
     </div>
   `;
-  item.querySelector(".prepare-preview").addEventListener("click", () => openThumbnailViewer(pageNumber));
+  item.querySelector(".prepare-card-toggle").addEventListener("click", () => togglePreparedItem(item));
   item.querySelector(".prepare-item-controls").addEventListener("click", (event) => {
     const action = event.target.dataset.action;
     if (!action || isExporting) return;
@@ -737,23 +751,6 @@ function createPreparedItem(pageNumber, index) {
     if (preparedPages.length === 0) elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
   });
   return item;
-}
-
-function openThumbnailViewer(pageNumber) {
-  const url = thumbnailUrls.get(pageNumber);
-  if (!url) return;
-  elements.thumbnailViewerTitle.textContent = `Páxina ${pageNumber}`;
-  elements.thumbnailViewerImage.src = url;
-  elements.thumbnailViewerImage.alt = `Vista ampliada da páxina ${pageNumber}`;
-  elements.thumbnailViewer.hidden = false;
-  elements.closeThumbnailViewer.focus();
-}
-
-function closeThumbnailViewer() {
-  if (elements.thumbnailViewer.hidden) return;
-  elements.thumbnailViewer.hidden = true;
-  elements.thumbnailViewerImage.removeAttribute("src");
-  elements.thumbnailViewerImage.alt = "";
 }
 
 function updateThumbnailProgress() {
@@ -857,8 +854,11 @@ function enqueueThumbnail(pageNumber, sequence) {
 function observePreparedThumbnails() {
   const sequence = ++thumbnailSequence;
   const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  // The first viewport must never depend on IntersectionObserver: enqueue its
+  // four cards immediately and use the observer only to lazy-load the rest.
+  items.slice(0, 4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
   if (!("IntersectionObserver" in window)) {
-    items.slice(0, 8).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
+    items.slice(4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
     return;
   }
   thumbnailObserver = new IntersectionObserver((entries) => {
@@ -866,7 +866,7 @@ function observePreparedThumbnails() {
       if (entry.isIntersecting) enqueueThumbnail(Number(entry.target.dataset.page), sequence);
     }
   }, { root: elements.prepareGrid, rootMargin: "300px 0px", threshold: 0.01 });
-  items.forEach((item) => thumbnailObserver.observe(item));
+  items.slice(4).forEach((item) => thumbnailObserver.observe(item));
 }
 
 function openPrepareSend() {
@@ -889,7 +889,6 @@ function openPrepareSend() {
 
 function closePrepareSend() {
   if (isExporting) return;
-  closeThumbnailViewer();
   disposeThumbnails();
   elements.prepareSend.hidden = true;
   elements.reader.hidden = false;
@@ -1034,10 +1033,6 @@ elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
 elements.backToReader.addEventListener("click", closePrepareSend);
 elements.confirmDownload.addEventListener("click", downloadSelectedPages);
-elements.closeThumbnailViewer.addEventListener("click", closeThumbnailViewer);
-elements.thumbnailViewer.addEventListener("click", (event) => {
-  if (event.target === elements.thumbnailViewer) closeThumbnailViewer();
-});
 elements.restoreSession?.addEventListener("click", restoreSavedSession);
 elements.discardSession?.addEventListener("click", startFreshSession);
 elements.diagnosticsToggle?.addEventListener("click", () => {
