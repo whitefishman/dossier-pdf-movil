@@ -545,20 +545,15 @@ function getFeaturedOrdinal(position) {
   return ordinals[position - 1] || `${position}ª`;
 }
 
-function toggleFeaturedSelection() {
+function selectFeaturedAndContinue() {
   if (!pdfDocument || pendingSession || isExporting) return;
-  const featuredIndex = featuredPages.indexOf(currentPage);
-  if (featuredIndex >= 0) {
-    featuredPages.splice(featuredIndex, 1);
-    selectedPages.delete(currentPage);
-  } else {
-    featuredPages.push(currentPage);
-    selectedPages.delete(currentPage);
-    selectedPages = new Set([...featuredPages, ...selectedPages]);
-  }
+  if (selectedPages.has(currentPage)) return;
+  featuredPages.push(currentPage);
+  selectedPages = new Set([...featuredPages, ...selectedPages]);
   updateSelectionCount();
   updateSelectedState();
   saveCurrentSession();
+  if (currentPage < pdfDocument.numPages) changePage(1);
 }
 
 function updateSelectionCount() {
@@ -572,16 +567,14 @@ function updateSelectionCount() {
 
 function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
-  const featuredIndex = featuredPages.indexOf(currentPage);
-  const isFeatured = featuredIndex >= 0;
   const selectedPosition = [...selectedPages].indexOf(currentPage) + 1;
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
   elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar e continuar" : "Seleccionar e continuar";
-  elements.selectFeatured.classList.toggle("is-featured", isFeatured);
-  elements.selectFeatured.setAttribute("aria-pressed", String(isFeatured));
-  elements.selectFeaturedLabel.textContent = isFeatured ? "Deseleccionar" : `Seleccionar como ${getFeaturedOrdinal(featuredPages.length + 1)}`;
+  elements.selectFeatured.hidden = isSelected;
+  elements.selectFeatured.setAttribute("aria-pressed", "false");
+  elements.selectFeaturedLabel.textContent = `Seleccionar como ${getFeaturedOrdinal(featuredPages.length + 1)}`;
   elements.selectionPositionStatus.textContent = isSelected ? `Seleccionada como ${selectedPosition}ª` : "";
   elements.selectionPositionStatus.hidden = !isSelected;
 }
@@ -1011,7 +1004,7 @@ elements.fileInput.addEventListener("change", (event) => {
 });
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
-elements.selectFeatured.addEventListener("click", toggleFeaturedSelection);
+elements.selectFeatured.addEventListener("click", selectFeaturedAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
 elements.backToReader.addEventListener("click", closePrepareSend);
