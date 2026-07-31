@@ -1,9 +1,10 @@
+import { createPrepareSend } from "./prepare-send.js?v=14";
+
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
-const MAX_CONCURRENT_THUMBNAILS = 2;
-const THUMBNAIL_MAX_WIDTH = 320;
-const THUMBNAIL_MAX_HEIGHT = 440;
+const THUMBNAIL_MAX_WIDTH = 240;
+const THUMBNAIL_MAX_HEIGHT = 340;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -33,11 +34,11 @@ const elements = {
   exportProgress: document.querySelector("#export-progress"),
   exportProgressBar: document.querySelector("#export-progress-bar"),
   exportProgressText: document.querySelector("#export-progress-text"),
-  prepareSend: document.querySelector("#prepare-send"),
-  prepareGrid: document.querySelector("#prepare-grid"),
-  prepareProgress: document.querySelector("#prepare-progress"),
-  prepareProgressBar: document.querySelector("#prepare-progress-bar"),
-  prepareProgressText: document.querySelector("#prepare-progress-text"),
+  prepareSend: document.querySelector("#send-review"),
+  prepareGrid: document.querySelector("#send-review-list"),
+  prepareProgress: document.querySelector("#send-review-progress"),
+  prepareProgressBar: document.querySelector("#send-review-progress-bar"),
+  prepareProgressText: document.querySelector("#send-review-progress-text"),
   backToReader: document.querySelector("#back-to-reader"),
   confirmDownload: document.querySelector("#confirm-download"),
   sessionRestore: document.querySelector("#session-restore"),
@@ -87,15 +88,7 @@ let documentBaseName = "documento";
 let isExporting = false;
 let currentFileIdentity = null;
 let pendingSession = null;
-let preparedPages = [];
-let thumbnailSequence = 0;
-let thumbnailObserver = null;
-let thumbnailQueue = [];
-let thumbnailActiveCount = 0;
-const thumbnailQueuedPages = new Set();
-const thumbnailProcessingPages = new Set();
-const thumbnailRenderTasks = new Map();
-const thumbnailUrls = new Map();
+let prepareSendController = null;
 
 async function loadPdfJs() {
   if (pdfjsLib) {
@@ -621,31 +614,36 @@ function waitForDownload() {
   return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
-function disposeThumbnails() {
-  thumbnailSequence++;
-  thumbnailObserver?.disconnect();
-  thumbnailObserver = null;
-  for (const task of thumbnailRenderTasks.values()) task.cancel();
-  thumbnailRenderTasks.clear();
-  thumbnailQueue = [];
-  thumbnailQueuedPages.clear();
-  thumbnailProcessingPages.clear();
-  thumbnailActiveCount = 0;
-  for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
-  thumbnailUrls.clear();
-}
-
-function cancelThumbnail(pageNumber) {
-  const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
-  if (item) thumbnailObserver?.unobserve(item);
-  thumbnailQueue = thumbnailQueue.filter((queuedPage) => queuedPage !== pageNumber);
-  thumbnailQueuedPages.delete(pageNumber);
-  thumbnailRenderTasks.get(pageNumber)?.cancel();
-  thumbnailRenderTasks.delete(pageNumber);
-  const url = thumbnailUrls.get(pageNumber);
-  if (url) URL.revokeObjectURL(url);
-  thumbnailUrls.delete(pageNumber);
-  updateThumbnailProgress();
+async function renderSendPreview(pageNumber, registerTask, isCancelled) {
+  await yieldToMainThread();
+  if (isCancelled()) return null;
+  const canvas = document.createElement("canvas");
+  let page = null;
+  try {
+    const context = canvas.getContext("2d", { alpha: false });
+    if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
+      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
+      canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
+      canvas.height = Math.max(1, Math.floor(elements.canvas.height * scale));
+      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(elements.canvas, 0, 0, canvas.width, canvas.height);
+    } else {
+      page = await pdfDocument.getPage(pageNumber);
+      if (isCancelled()) return null;
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(1, THUMBNAIL_MAX_WIDTH / base.width, THUMBNAIL_MAX_HEIGHT / base.height) });
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
+      const task = page.render({ canvasContext: context, viewport });
+      registerTask(task);
+      await task.promise;
+    }
+    if (isCancelled()) return null;
+    return await canvasToJpeg(canvas, 0.68);
+  } finally {
+    page?.cleanup(); canvas.width = 1; canvas.height = 1;
+  }
 }
 
 function yieldToMainThread() {
@@ -653,254 +651,16 @@ function yieldToMainThread() {
   return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
-function updatePreparedNumbers(fromIndex = 0, toIndex = Infinity) {
-  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-  items.forEach((item, index) => {
-    if (index < fromIndex || index > toIndex) return;
-    const position = item.querySelector(".prepare-number");
-    position.textContent = index + 1;
-    position.setAttribute("aria-label", `Posición de envío ${index + 1}`);
-    item.querySelector('[data-action="up"]').disabled = isExporting || index === 0;
-    item.querySelector('[data-action="down"]').disabled = isExporting || index === items.length - 1;
-    item.querySelector('[data-action="first"]').disabled = isExporting || index === 0;
-    item.querySelector('[data-action="remove"]').disabled = isExporting;
-  });
-}
-
-function syncPreparedOrder(fromIndex = 0, toIndex = Infinity) {
-  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-  preparedPages = items.map((item) => Number(item.dataset.page));
-  const featuredSet = new Set(featuredPages);
-  featuredPages = preparedPages.filter((pageNumber) => featuredSet.has(pageNumber));
-  selectedPages = new Set(preparedPages);
-  updatePreparedNumbers(fromIndex, toIndex);
-  updateSelectionCount();
-  saveCurrentSession();
-  elements.confirmDownload.disabled = preparedPages.length === 0 || isExporting;
-}
-
-function movePreparedItem(item, action) {
-  if (isExporting) return;
-  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-  const index = items.indexOf(item);
-  let nextIndex = index;
-  if (action === "up" && index > 0) {
-    elements.prepareGrid.insertBefore(item, items[index - 1]);
-    nextIndex = index - 1;
-  }
-  if (action === "down" && index < items.length - 1) {
-    items[index + 1].after(item);
-    nextIndex = index + 1;
-  }
-  if (action === "first" && index > 0) {
-    elements.prepareGrid.prepend(item);
-    nextIndex = 0;
-  }
-  syncPreparedOrder(Math.min(index, nextIndex), Math.max(index, nextIndex));
-}
-
-function togglePreparedItem(item) {
-  const controls = item.querySelector(".prepare-item-controls");
-  const toggle = item.querySelector(".prepare-card-toggle");
-  const willExpand = controls.hidden;
-
-  for (const expandedItem of elements.prepareGrid.querySelectorAll(".prepare-item.is-expanded")) {
-    expandedItem.classList.remove("is-expanded");
-    expandedItem.querySelector(".prepare-item-controls").hidden = true;
-    expandedItem.querySelector(".prepare-card-toggle").setAttribute("aria-expanded", "false");
-  }
-
-  controls.hidden = !willExpand;
-  item.classList.toggle("is-expanded", willExpand);
-  toggle.setAttribute("aria-expanded", String(willExpand));
-}
-
-function createPreparedItem(pageNumber, index) {
-  const item = document.createElement("article");
-  item.className = "prepare-item";
-  item.dataset.page = pageNumber;
-  item.innerHTML = `
-    <button class="prepare-card-toggle" type="button" aria-label="Mostrar controis da páxina ${pageNumber}" aria-expanded="false">
-      <span class="prepare-meta">
-        <span class="prepare-number" aria-label="Posición de envío ${index + 1}">${index + 1}</span>
-        <span class="prepare-page-label">Páxina ${pageNumber}</span>
-      </span>
-      <span class="prepare-preview">
-        <span class="prepare-placeholder" role="status">Cargando miniatura…</span>
-      </span>
-    </button>
-    <div class="prepare-item-controls" hidden>
-      <button type="button" data-action="up" aria-label="Subir páxina ${pageNumber}">Subir</button>
-      <button type="button" data-action="first" aria-label="Mover páxina ${pageNumber} ao primeiro posto">Primeira</button>
-      <button type="button" data-action="down" aria-label="Baixar páxina ${pageNumber}">Baixar</button>
-      <button type="button" data-action="remove" aria-label="Eliminar páxina ${pageNumber}">Eliminar</button>
-    </div>
-  `;
-  item.querySelector(".prepare-card-toggle").addEventListener("click", () => togglePreparedItem(item));
-  item.querySelector(".prepare-item-controls").addEventListener("click", (event) => {
-    const action = event.target.dataset.action;
-    if (!action || isExporting) return;
-    if (action !== "remove") {
-      movePreparedItem(item, action);
-      return;
-    }
-    const removedIndex = [...elements.prepareGrid.querySelectorAll(".prepare-item")].indexOf(item);
-    cancelThumbnail(pageNumber);
-    item.remove();
-    syncPreparedOrder(Math.max(0, removedIndex - 1));
-    if (preparedPages.length === 0) elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
-  });
-  return item;
-}
-
-function updateThumbnailProgress() {
-  const isBusy = thumbnailActiveCount > 0 || thumbnailQueue.length > 0;
-  elements.prepareProgress.hidden = !isBusy;
-  elements.prepareProgressBar.max = Math.max(1, preparedPages.length);
-  elements.prepareProgressBar.value = thumbnailUrls.size;
-  if (isBusy) setOptionalText(elements.prepareProgressText, "Cargando miniaturas visibles…");
-}
-
-async function renderPreparedThumbnail(pageNumber, sequence) {
-  let page = null;
-  let task = null;
-  const canvas = document.createElement("canvas");
-  try {
-    await yieldToMainThread();
-    if (sequence !== thumbnailSequence || !preparedPages.includes(pageNumber)) return;
-    const context = canvas.getContext("2d", { alpha: false });
-    if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
-      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
-      canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
-      canvas.height = Math.max(1, Math.floor(elements.canvas.height * scale));
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(elements.canvas, 0, 0, canvas.width, canvas.height);
-    } else {
-      page = await pdfDocument.getPage(pageNumber);
-      const baseViewport = page.getViewport({ scale: 1 });
-      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / baseViewport.width, THUMBNAIL_MAX_HEIGHT / baseViewport.height);
-      const viewport = page.getViewport({ scale });
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      task = page.render({ canvasContext: context, viewport });
-      thumbnailRenderTasks.set(pageNumber, task);
-      await task.promise;
-    }
-    const blob = await canvasToJpeg(canvas, 0.7);
-    if (sequence !== thumbnailSequence || !preparedPages.includes(pageNumber)) return;
-    const url = URL.createObjectURL(blob);
-    thumbnailUrls.set(pageNumber, url);
-    const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
-    if (item) {
-      const image = document.createElement("img");
-      image.src = url;
-      image.alt = `Páxina ${pageNumber}`;
-      item.querySelector(".prepare-placeholder")?.replaceWith(image);
-      item.classList.add("is-thumbnail-loaded");
-      thumbnailObserver?.unobserve(item);
-    }
-  } catch (error) {
-    if (error?.name !== "RenderingCancelledException") {
-      console.error(error);
-      reportDiagnosticError(error);
-      setOptionalText(elements.prepareProgressText, "Non se puido cargar unha miniatura.");
-      const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
-      const placeholder = item?.querySelector(".prepare-placeholder");
-      if (placeholder) {
-        placeholder.textContent = "Non se puido cargar a miniatura.";
-        placeholder.classList.add("is-error");
-      }
-      if (item) thumbnailObserver?.unobserve(item);
-    }
-  } finally {
-    if (thumbnailRenderTasks.get(pageNumber) === task) thumbnailRenderTasks.delete(pageNumber);
-    page?.cleanup();
-    canvas.width = 1;
-    canvas.height = 1;
-  }
-}
-
-function processThumbnailQueue(sequence) {
-  while (sequence === thumbnailSequence && thumbnailActiveCount < MAX_CONCURRENT_THUMBNAILS && thumbnailQueue.length > 0) {
-    const pageNumber = thumbnailQueue.shift();
-    if (thumbnailUrls.has(pageNumber) || !preparedPages.includes(pageNumber)) {
-      thumbnailQueuedPages.delete(pageNumber);
-      continue;
-    }
-    thumbnailProcessingPages.add(pageNumber);
-    thumbnailActiveCount++;
-    renderPreparedThumbnail(pageNumber, sequence).finally(() => {
-      if (sequence !== thumbnailSequence) return;
-      thumbnailProcessingPages.delete(pageNumber);
-      thumbnailQueuedPages.delete(pageNumber);
-      thumbnailActiveCount--;
-      updateThumbnailProgress();
-      processThumbnailQueue(sequence);
-    });
-  }
-  updateThumbnailProgress();
-}
-
-function enqueueThumbnail(pageNumber, sequence) {
-  if (sequence !== thumbnailSequence || thumbnailUrls.has(pageNumber) || thumbnailQueuedPages.has(pageNumber) || thumbnailProcessingPages.has(pageNumber)) return;
-  thumbnailQueuedPages.add(pageNumber);
-  thumbnailQueue.push(pageNumber);
-  processThumbnailQueue(sequence);
-}
-
-function observePreparedThumbnails() {
-  const sequence = ++thumbnailSequence;
-  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
-  // The first viewport must never depend on IntersectionObserver: enqueue its
-  // four cards immediately and use the observer only to lazy-load the rest.
-  items.slice(0, 4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
-  if (!("IntersectionObserver" in window)) {
-    items.slice(4).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
-    return;
-  }
-  thumbnailObserver = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.isIntersecting) enqueueThumbnail(Number(entry.target.dataset.page), sequence);
-    }
-  }, { root: elements.prepareGrid, rootMargin: "300px 0px", threshold: 0.01 });
-  items.slice(4).forEach((item) => thumbnailObserver.observe(item));
-}
-
 function openPrepareSend() {
   if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
-  disposeThumbnails();
-  if (preloadTask) {
-    preloadTask.cancel();
-    preloadTask = null;
-  }
+  preloadTask?.cancel(); preloadTask = null;
   clearAdjacentPageCache();
-  preparedPages = [...selectedPages];
-  elements.prepareGrid.replaceChildren(...preparedPages.map(createPreparedItem));
-  updatePreparedNumbers();
-  elements.prepareProgress.hidden = true;
-  elements.confirmDownload.disabled = false;
   elements.reader.hidden = true;
-  elements.prepareSend.hidden = false;
-  observePreparedThumbnails();
+  prepareSendController.open([...selectedPages]);
 }
 
-function closePrepareSend() {
-  if (isExporting) return;
-  disposeThumbnails();
-  elements.prepareSend.hidden = true;
-  elements.reader.hidden = false;
-  elements.prepareProgress.hidden = true;
-  updateSelectionCount();
-  updateSelectedState();
-}
-
-async function downloadSelectedPages() {
-  if (!pdfDocument || preparedPages.length === 0 || isExporting) return;
-
-  const pages = [...preparedPages];
+async function downloadSelectedPages(pages) {
+  if (!pdfDocument || pages.length === 0 || isExporting) return;
   const orderWidth = Math.max(2, String(pages.length).length);
   const exportCanvas = document.createElement("canvas");
   const context = exportCanvas.getContext("2d", { alpha: false });
@@ -912,9 +672,7 @@ async function downloadSelectedPages() {
   elements.prepareProgress.hidden = false;
   elements.prepareProgressBar.max = pages.length;
   elements.prepareProgressBar.value = 0;
-  elements.backToReader.disabled = true;
-  elements.confirmDownload.disabled = true;
-  updatePreparedNumbers();
+  prepareSendController.setExporting(true);
   updateControls();
 
   try {
@@ -961,9 +719,7 @@ async function downloadSelectedPages() {
     exportCanvas.width = 1;
     exportCanvas.height = 1;
     isExporting = false;
-    elements.backToReader.disabled = false;
-    elements.confirmDownload.disabled = preparedPages.length === 0;
-    updatePreparedNumbers();
+    prepareSendController.setExporting(false);
     updateControls();
   }
 }
@@ -987,7 +743,7 @@ function clearError() {
 async function closeDocument() {
   renderSequence++;
   resetZoom();
-  disposeThumbnails();
+  prepareSendController?.dispose();
   if (renderTask) {
     renderTask.cancel();
     renderTask = null;
@@ -1020,6 +776,29 @@ async function returnHome() {
   elements.welcome.hidden = false;
 }
 
+prepareSendController = createPrepareSend({
+  screen: elements.prepareSend,
+  list: elements.prepareGrid,
+  progress: elements.prepareProgress,
+  progressBar: elements.prepareProgressBar,
+  progressText: elements.prepareProgressText,
+  backButton: elements.backToReader,
+  downloadButton: elements.confirmDownload,
+  renderPreview: renderSendPreview,
+  onPreviewError: reportDiagnosticError,
+  onOrderChanged: (pages) => {
+    const featuredSet = new Set(featuredPages);
+    featuredPages = pages.filter((page) => featuredSet.has(page));
+    selectedPages = new Set(pages);
+    updateSelectionCount(); saveCurrentSession();
+  },
+  onBack: () => {
+    elements.reader.hidden = false;
+    updateSelectionCount(); updateSelectedState();
+  },
+  onDownload: downloadSelectedPages,
+});
+
 elements.fileInput.addEventListener("change", (event) => {
   setOptionalText(elements.diagnosticChange, `Disparado (${new Date().toLocaleTimeString("gl-ES")})`);
   const [file] = event.target.files;
@@ -1031,8 +810,7 @@ elements.selectAndContinue.addEventListener("click", selectAndContinue);
 elements.selectFeatured.addEventListener("click", selectFeaturedAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
-elements.backToReader.addEventListener("click", closePrepareSend);
-elements.confirmDownload.addEventListener("click", downloadSelectedPages);
+
 elements.restoreSession?.addEventListener("click", restoreSavedSession);
 elements.discardSession?.addEventListener("click", startFreshSession);
 elements.diagnosticsToggle?.addEventListener("click", () => {
@@ -1127,10 +905,6 @@ elements.stage.addEventListener("touchcancel", () => {
 });
 
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !elements.thumbnailViewer.hidden) {
-    closeThumbnailViewer();
-    return;
-  }
   if (elements.reader.hidden) return;
   if (event.key === "ArrowLeft") changePage(-1);
   if (event.key === "ArrowRight") changePage(1);
