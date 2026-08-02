@@ -1,11 +1,11 @@
-const CACHE_NAME = "dossier-pdf-v14";
+const CACHE_NAME = "dossier-pdf-v15";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=14",
-  "./app.js?v=14",
-  "./prepare-send.css?v=14",
-  "./prepare-send.js?v=14",
+  "./styles.css?v=15",
+  "./app.js?v=15",
+  "./prepare-send.css?v=15",
+  "./prepare-send.js?v=15",
   "./manifest.webmanifest",
   "./icons/dossier-xa-icon.svg",
   "./icons/icon-192.png",
@@ -23,7 +23,7 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))),
+    caches.keys().then((keys) => Promise.all(keys.map((key) => key === CACHE_NAME ? true : caches.delete(key)))),
   );
   self.clients.claim();
 });
