@@ -1,18 +1,19 @@
 const MAX_PARALLEL_PREVIEWS = 2;
-const FIRST_PREVIEWS = 4;
 
 export function createPrepareSend(options) {
   const { screen, list, progress, progressBar, progressText, backButton, downloadButton } = options;
   let pages = [];
   let openPage = null;
   let generation = 0;
-  let observer = null;
   let queue = [];
   let running = 0;
   let exporting = false;
   const queued = new Set();
   const tasks = new Map();
   const previews = new Map();
+  const previewStats = { requested: 0, completed: 0, failed: 0, lastError: "Sen erros" };
+
+  function reportStats() { options.onPreviewStats?.({ ...previewStats }); }
 
   function cards() { return [...list.querySelectorAll(".send-sheet")]; }
 
@@ -21,7 +22,7 @@ export function createPrepareSend(options) {
     progress.hidden = !busy;
     progressBar.max = Math.max(1, pages.length);
     progressBar.value = previews.size;
-    if (busy) progressText.textContent = "Cargando miniaturas visibles…";
+    if (busy) progressText.textContent = `Cargando miniaturas… ${previewStats.completed + previewStats.failed}/${previewStats.requested}`;
   }
 
   function refreshPositions(from = 0, to = Infinity) {
@@ -77,23 +78,31 @@ export function createPrepareSend(options) {
       const page = queue.shift();
       if (!pages.includes(page) || previews.has(page)) { queued.delete(page); continue; }
       running++;
-      options.renderPreview(page, (task) => tasks.set(page, task), () => token !== generation || !pages.includes(page))
+      Promise.resolve().then(() => options.renderPreview(page, (task) => tasks.set(page, task), () => token !== generation || !pages.includes(page)))
         .then((blob) => {
-          if (!blob || token !== generation || !pages.includes(page)) return;
+          if (token !== generation || !pages.includes(page)) return;
+          if (!(blob instanceof Blob) || !blob.type.startsWith("image/") || blob.size === 0) {
+            throw new TypeError(`renderPreview non devolveu un Blob de imaxe válido para a páxina ${page}.`);
+          }
           const url = URL.createObjectURL(blob);
           previews.set(page, url);
+          previewStats.completed++;
+          reportStats();
           const card = list.querySelector(`.send-sheet[data-page="${page}"]`);
           const image = document.createElement("img");
           image.className = "send-sheet__image";
           image.src = url;
           image.alt = `Miniatura da páxina ${page}`;
           card?.querySelector(".send-sheet__loading")?.replaceWith(image);
-          if (card) observer?.unobserve(card);
         })
         .catch((error) => {
           if (error?.name === "RenderingCancelledException" || token !== generation) return;
+          const message = error?.stack || `${error?.name || "Error"}: ${error?.message || String(error)}`;
+          previewStats.failed++;
+          previewStats.lastError = message;
+          reportStats();
           const state = list.querySelector(`.send-sheet[data-page="${page}"] .send-sheet__loading`);
-          if (state) { state.classList.add("send-sheet__loading--error"); state.textContent = "Non se puido cargar"; }
+          if (state) { state.classList.add("send-sheet__loading--error"); state.textContent = message; }
           options.onPreviewError(error);
         })
         .finally(() => {
@@ -108,7 +117,7 @@ export function createPrepareSend(options) {
 
   function enqueue(page, token) {
     if (token !== generation || queued.has(page) || previews.has(page)) return;
-    queued.add(page); queue.push(page); runQueue(token);
+    queued.add(page); queue.push(page); previewStats.requested++; reportStats(); runQueue(token);
   }
 
   function createCard(page, index) {
@@ -145,22 +154,20 @@ export function createPrepareSend(options) {
   }
 
   function dispose() {
-    generation++; observer?.disconnect(); observer = null; queue = [];
+    generation++; queue = [];
     tasks.forEach((task) => task.cancel?.()); tasks.clear(); queued.clear(); running = 0;
     previews.forEach((url) => URL.revokeObjectURL(url)); previews.clear(); closeControls(); updateProgress();
   }
 
   function open(orderedPages) {
     dispose(); pages = [...orderedPages];
+    previewStats.requested = 0; previewStats.completed = 0; previewStats.failed = 0; previewStats.lastError = "Sen erros"; reportStats();
     list.replaceChildren(...pages.map(createCard));
     refreshPositions(); screen.hidden = false;
     const token = generation;
-    const allCards = cards();
-    allCards.slice(0, FIRST_PREVIEWS).forEach((card) => enqueue(Number(card.dataset.page), token));
-    if ("IntersectionObserver" in window) {
-      observer = new IntersectionObserver((entries) => entries.forEach((entry) => entry.isIntersecting && enqueue(Number(entry.target.dataset.page), token)), { root: list, rootMargin: "320px 0px" });
-      allCards.slice(FIRST_PREVIEWS).forEach((card) => observer.observe(card));
-    } else allCards.slice(FIRST_PREVIEWS).forEach((card) => enqueue(Number(card.dataset.page), token));
+    // Enqueue every card immediately. In particular, the first four previews never
+    // depend on visibility or IntersectionObserver support on Android.
+    cards().forEach((card) => enqueue(Number(card.dataset.page), token));
   }
 
   function close() { if (exporting) return; dispose(); screen.hidden = true; options.onBack(); }

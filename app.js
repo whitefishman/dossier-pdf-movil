@@ -1,4 +1,4 @@
-import { createPrepareSend } from "./prepare-send.js?v=14";
+import { createPrepareSend } from "./prepare-send.js?v=15";
 
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
@@ -52,6 +52,10 @@ const elements = {
   diagnosticDocument: document.querySelector("#diagnostic-document"),
   diagnosticPages: document.querySelector("#diagnostic-pages"),
   diagnosticError: document.querySelector("#diagnostic-error"),
+  diagnosticPreviewsRequested: document.querySelector("#diagnostic-previews-requested"),
+  diagnosticPreviewsCompleted: document.querySelector("#diagnostic-previews-completed"),
+  diagnosticPreviewsFailed: document.querySelector("#diagnostic-previews-failed"),
+  diagnosticPreviewError: document.querySelector("#diagnostic-preview-error"),
   diagnostics: document.querySelector("#diagnostics"),
   diagnosticsToggle: document.querySelector("#diagnostics-toggle"),
   clearCache: document.querySelector("#clear-cache"),
@@ -617,10 +621,12 @@ function waitForDownload() {
 async function renderSendPreview(pageNumber, registerTask, isCancelled) {
   await yieldToMainThread();
   if (isCancelled()) return null;
+  if (!pdfDocument) throw new Error("Non hai ningún documento PDF dispoñible para renderizar a miniatura.");
   const canvas = document.createElement("canvas");
   let page = null;
   try {
     const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error(`Non se puido crear o contexto 2D da miniatura da páxina ${pageNumber}.`);
     if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
       const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
       canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
@@ -640,7 +646,11 @@ async function renderSendPreview(pageNumber, registerTask, isCancelled) {
       await task.promise;
     }
     if (isCancelled()) return null;
-    return await canvasToJpeg(canvas, 0.68);
+    const blob = await canvasToJpeg(canvas, 0.68);
+    if (!(blob instanceof Blob) || !blob.type.startsWith("image/") || blob.size === 0) {
+      throw new TypeError(`A conversión da páxina ${pageNumber} non produciu un Blob de imaxe válido.`);
+    }
+    return blob;
   } finally {
     page?.cleanup(); canvas.width = 1; canvas.height = 1;
   }
@@ -786,6 +796,12 @@ prepareSendController = createPrepareSend({
   downloadButton: elements.confirmDownload,
   renderPreview: renderSendPreview,
   onPreviewError: reportDiagnosticError,
+  onPreviewStats: ({ requested, completed, failed, lastError }) => {
+    setOptionalText(elements.diagnosticPreviewsRequested, String(requested));
+    setOptionalText(elements.diagnosticPreviewsCompleted, String(completed));
+    setOptionalText(elements.diagnosticPreviewsFailed, String(failed));
+    setOptionalText(elements.diagnosticPreviewError, lastError);
+  },
   onOrderChanged: (pages) => {
     const featuredSet = new Set(featuredPages);
     featuredPages = pages.filter((page) => featuredSet.has(page));
