@@ -1,11 +1,11 @@
-const CACHE_NAME = "dossier-pdf-v15";
+const CACHE_NAME = "dossier-pdf-v16";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css?v=15",
-  "./app.js?v=15",
-  "./prepare-send.css?v=15",
-  "./prepare-send.js?v=15",
+  "./app.js?v=16",
+  "./prepare-send.css?v=16",
+  "./prepare-send.js?v=16",
   "./manifest.webmanifest",
   "./icons/dossier-xa-icon.svg",
   "./icons/icon-192.png",
