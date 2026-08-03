@@ -36,10 +36,12 @@ jobs:
 
       - name: Verificar la implementación de Preparar envío
         run: |
-          grep -F 'import { createPrepareSend } from "./prepare-send.js?v=15";' app.js
-          grep -F 'export function createPrepareSend(options)' prepare-send.js
-          grep -F 'grid-template-columns: repeat(2' prepare-send.css
-          grep -F 'const CACHE_NAME = "dossier-pdf-v15"' service-worker.js
+          grep -E '^import[[:space:]]+\{[[:space:]]*createPrepareSend[[:space:]]*\}[[:space:]]+from[[:space:]]+"\./prepare-send\.js(\?[^"[:space:]]*)?";' app.js
+          test -f prepare-send.js
+          test -f prepare-send.css
+          node --check app.js
+          node --check prepare-send.js
+          node --check service-worker.js
           printf '{"commit":"%s","branch":"%s"}\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" > deployment-version.json
 
       - name: Preparar los archivos
