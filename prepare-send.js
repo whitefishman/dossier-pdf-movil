@@ -3,7 +3,7 @@ const MAX_PARALLEL_PREVIEWS = 2;
 export function createPrepareSend(options) {
   const { screen, list, progress, progressBar, progressText, backButton, downloadButton } = options;
   let pages = [];
-  let openPage = null;
+  let editingPage = null;
   let generation = 0;
   let queue = [];
   let running = 0;
@@ -12,27 +12,54 @@ export function createPrepareSend(options) {
   const tasks = new Map();
   const previews = new Map();
   const previewStats = { requested: 0, completed: 0, failed: 0, lastError: "Sen erros" };
-  const viewer = document.createElement("dialog");
-  viewer.className = "send-preview-viewer";
-  viewer.innerHTML = '<button class="send-preview-viewer__close" type="button" aria-label="Pechar vista ampliada">×</button><img class="send-preview-viewer__image" alt="">';
-  screen.append(viewer);
-  const viewerImage = viewer.querySelector(".send-preview-viewer__image");
+  const editor = document.createElement("dialog");
+  editor.className = "send-page-editor";
+  editor.innerHTML = `<header class="send-page-editor__head"><strong class="send-page-editor__title"></strong><button class="send-page-editor__close" type="button" aria-label="Cerrar editor">×</button></header>
+    <div class="send-page-editor__page"><span class="send-page-editor__loading">Cargando página…</span><img class="send-page-editor__image" alt=""></div>
+    <div class="send-page-editor__actions" aria-label="Acciones de la página">
+      <button type="button" data-command="up">⬆️ <span>Subir una posición</span></button>
+      <button type="button" data-command="down">⬇️ <span>Bajar una posición</span></button>
+      <button type="button" data-command="first">⭐ <span>Enviar primero</span></button>
+      <button type="button" data-command="remove">🗑 <span>Eliminar del envío</span></button>
+    </div>`;
+  screen.append(editor);
+  const editorImage = editor.querySelector(".send-page-editor__image");
+  const editorLoading = editor.querySelector(".send-page-editor__loading");
 
-  function closeViewer() {
-    if (viewer.open) viewer.close();
-    viewerImage.removeAttribute("src");
+  function closeEditor() {
+    if (editor.open) editor.close();
+    editingPage = null;
+    editorImage.removeAttribute("src");
+    editorImage.hidden = true;
+    editorLoading.hidden = false;
   }
 
-  function openViewer(page) {
+  function openEditor(page) {
+    const card = list.querySelector(`.send-sheet[data-page="${page}"]`);
+    if (!card || exporting) return;
+    editingPage = page;
     const url = previews.get(page);
-    if (!url) return;
-    viewerImage.src = url;
-    viewerImage.alt = `Vista completa da páxina ${page}`;
-    viewer.showModal();
+    editor.querySelector(".send-page-editor__title").textContent = `Página ${page}`;
+    editorImage.alt = `Página ${page}`;
+    editorImage.hidden = !url;
+    editorLoading.hidden = Boolean(url);
+    if (url) editorImage.src = url;
+    const index = cards().indexOf(card);
+    editor.querySelector('[data-command="up"]').disabled = index === 0;
+    editor.querySelector('[data-command="first"]').disabled = index === 0;
+    editor.querySelector('[data-command="down"]').disabled = index === pages.length - 1;
+    editor.showModal();
   }
 
-  viewer.querySelector(".send-preview-viewer__close").addEventListener("click", closeViewer);
-  viewer.addEventListener("click", (event) => { if (event.target === viewer) closeViewer(); });
+  editor.querySelector(".send-page-editor__close").addEventListener("click", closeEditor);
+  editor.addEventListener("cancel", (event) => { event.preventDefault(); closeEditor(); });
+  editor.querySelector(".send-page-editor__actions").addEventListener("click", (event) => {
+    const action = event.target.closest("button")?.dataset.command;
+    const card = list.querySelector(`.send-sheet[data-page="${editingPage}"]`);
+    if (!action || !card) return;
+    closeEditor();
+    command(card, action);
+  });
 
   function reportStats() { options.onPreviewStats?.({ ...previewStats }); }
 
@@ -51,10 +78,6 @@ export function createPrepareSend(options) {
     allCards.forEach((card, index) => {
       if (index < from || index > to) return;
       card.querySelector(".send-sheet__position").textContent = String(index + 1);
-      card.querySelector('[data-command="up"]').disabled = exporting || index === 0;
-      card.querySelector('[data-command="first"]').disabled = exporting || index === 0;
-      card.querySelector('[data-command="down"]').disabled = exporting || index === allCards.length - 1;
-      card.querySelector('[data-command="remove"]').disabled = exporting;
     });
     downloadButton.disabled = exporting || pages.length === 0;
   }
@@ -63,25 +86,6 @@ export function createPrepareSend(options) {
     pages = cards().map((card) => Number(card.dataset.page));
     refreshPositions(from, to);
     options.onOrderChanged([...pages]);
-  }
-
-  function closeControls() {
-    if (openPage === null) return;
-    const card = list.querySelector(`.send-sheet[data-page="${openPage}"]`);
-    card?.classList.remove("send-sheet--open");
-    card?.querySelector(".send-sheet__toggle")?.setAttribute("aria-expanded", "false");
-    openPage = null;
-  }
-
-  function toggleControls(card) {
-    const page = Number(card.dataset.page);
-    const wasOpen = openPage === page;
-    closeControls();
-    if (!wasOpen) {
-      card.classList.add("send-sheet--open");
-      card.querySelector(".send-sheet__toggle").setAttribute("aria-expanded", "true");
-      openPage = page;
-    }
   }
 
   function cancelPage(page) {
@@ -115,6 +119,11 @@ export function createPrepareSend(options) {
           image.src = url;
           image.alt = `Miniatura da páxina ${page}`;
           card?.querySelector(".send-sheet__loading")?.replaceWith(image);
+          if (editingPage === page) {
+            editorImage.src = url;
+            editorImage.hidden = false;
+            editorLoading.hidden = true;
+          }
         })
         .catch((error) => {
           if (error?.name === "RenderingCancelledException" || token !== generation) return;
@@ -145,15 +154,11 @@ export function createPrepareSend(options) {
     const card = document.createElement("article");
     card.className = "send-sheet";
     card.dataset.page = page;
-    card.innerHTML = `<button class="send-sheet__preview" type="button" aria-label="Ampliar páxina ${page}"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></button>
-    <div class="send-sheet__caption"><button class="send-sheet__toggle" type="button" aria-expanded="false" aria-label="Abrir accións da páxina ${page}"><strong><span class="send-sheet__position">${index + 1}</span><span class="send-sheet__order-label">ª no envío</span></strong><span>Páxina ${page}</span><b aria-hidden="true">•••</b></button></div>
-    <div class="send-sheet__commands">
-      <button type="button" data-command="up">↑ <span>Subir</span></button><button type="button" data-command="down">↓ <span>Baixar</span></button>
-      <button type="button" data-command="first">★ <span>Primeira</span></button><button type="button" data-command="remove">✕ <span>Eliminar</span></button>
-    </div>`;
-    card.querySelector(".send-sheet__preview").addEventListener("click", () => openViewer(page));
-    card.querySelector(".send-sheet__toggle").addEventListener("click", () => toggleControls(card));
-    card.querySelector(".send-sheet__commands").addEventListener("click", (event) => command(card, event.target.closest("button")?.dataset.command));
+    card.innerHTML = `<button class="send-sheet__open" type="button" aria-label="Editar página ${page}">
+      <span class="send-sheet__preview"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></span>
+      <span class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span class="send-sheet__order-label">ª en el envío</span></strong><span>Página ${page}</span></span>
+    </button>`;
+    card.querySelector(".send-sheet__open").addEventListener("click", () => openEditor(page));
     return card;
   }
 
@@ -166,7 +171,7 @@ export function createPrepareSend(options) {
     else if (action === "down" && index < allCards.length - 1) { allCards[index + 1].after(card); next++; }
     else if (action === "first" && index > 0) { list.prepend(card); next = 0; }
     else if (action === "remove") {
-      const page = Number(card.dataset.page); cancelPage(page); card.remove(); closeControls();
+      const page = Number(card.dataset.page); cancelPage(page); card.remove();
       syncOrder(Math.max(0, index - 1));
       if (!pages.length) list.innerHTML = '<p class="send-review__empty">Non hai páxinas seleccionadas.</p>';
       return;
@@ -175,10 +180,10 @@ export function createPrepareSend(options) {
   }
 
   function dispose() {
-    closeViewer();
+    closeEditor();
     generation++; queue = [];
     tasks.forEach((task) => task.cancel?.()); tasks.clear(); queued.clear(); running = 0;
-    previews.forEach((url) => URL.revokeObjectURL(url)); previews.clear(); closeControls(); updateProgress();
+    previews.forEach((url) => URL.revokeObjectURL(url)); previews.clear(); updateProgress();
   }
 
   function open(orderedPages) {

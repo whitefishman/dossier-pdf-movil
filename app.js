@@ -1,4 +1,4 @@
-import { createPrepareSend } from "./prepare-send.js?v=16";
+import { createPrepareSend } from "./prepare-send.js?v=17";
 
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
