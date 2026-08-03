@@ -12,6 +12,27 @@ export function createPrepareSend(options) {
   const tasks = new Map();
   const previews = new Map();
   const previewStats = { requested: 0, completed: 0, failed: 0, lastError: "Sen erros" };
+  const viewer = document.createElement("dialog");
+  viewer.className = "send-preview-viewer";
+  viewer.innerHTML = '<button class="send-preview-viewer__close" type="button" aria-label="Pechar vista ampliada">×</button><img class="send-preview-viewer__image" alt="">';
+  screen.append(viewer);
+  const viewerImage = viewer.querySelector(".send-preview-viewer__image");
+
+  function closeViewer() {
+    if (viewer.open) viewer.close();
+    viewerImage.removeAttribute("src");
+  }
+
+  function openViewer(page) {
+    const url = previews.get(page);
+    if (!url) return;
+    viewerImage.src = url;
+    viewerImage.alt = `Vista completa da páxina ${page}`;
+    viewer.showModal();
+  }
+
+  viewer.querySelector(".send-preview-viewer__close").addEventListener("click", closeViewer);
+  viewer.addEventListener("click", (event) => { if (event.target === viewer) closeViewer(); });
 
   function reportStats() { options.onPreviewStats?.({ ...previewStats }); }
 
@@ -124,13 +145,13 @@ export function createPrepareSend(options) {
     const card = document.createElement("article");
     card.className = "send-sheet";
     card.dataset.page = page;
-    card.innerHTML = `<button class="send-sheet__toggle" type="button" aria-expanded="false" aria-label="Abrir accións da páxina ${page}">
-      <span class="send-sheet__preview"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></span>
-      <span class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span class="send-sheet__order-label">ª no envío</span></strong><span>Páxina ${page}</span><b aria-hidden="true">•••</b></span>
-    </button><div class="send-sheet__commands">
+    card.innerHTML = `<button class="send-sheet__preview" type="button" aria-label="Ampliar páxina ${page}"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></button>
+    <div class="send-sheet__caption"><button class="send-sheet__toggle" type="button" aria-expanded="false" aria-label="Abrir accións da páxina ${page}"><strong><span class="send-sheet__position">${index + 1}</span><span class="send-sheet__order-label">ª no envío</span></strong><span>Páxina ${page}</span><b aria-hidden="true">•••</b></button></div>
+    <div class="send-sheet__commands">
       <button type="button" data-command="up">↑ <span>Subir</span></button><button type="button" data-command="down">↓ <span>Baixar</span></button>
       <button type="button" data-command="first">★ <span>Primeira</span></button><button type="button" data-command="remove">✕ <span>Eliminar</span></button>
     </div>`;
+    card.querySelector(".send-sheet__preview").addEventListener("click", () => openViewer(page));
     card.querySelector(".send-sheet__toggle").addEventListener("click", () => toggleControls(card));
     card.querySelector(".send-sheet__commands").addEventListener("click", (event) => command(card, event.target.closest("button")?.dataset.command));
     return card;
@@ -154,6 +175,7 @@ export function createPrepareSend(options) {
   }
 
   function dispose() {
+    closeViewer();
     generation++; queue = [];
     tasks.forEach((task) => task.cancel?.()); tasks.clear(); queued.clear(); running = 0;
     previews.forEach((url) => URL.revokeObjectURL(url)); previews.clear(); closeControls(); updateProgress();
