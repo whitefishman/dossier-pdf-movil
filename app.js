@@ -618,6 +618,13 @@ function waitForDownload() {
   return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
+function getLocalDatePrefix(date) {
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
 async function renderSendPreview(pageNumber, registerTask, isCancelled) {
   await yieldToMainThread();
   if (isCancelled()) return null;
@@ -671,6 +678,7 @@ function openPrepareSend() {
 
 async function downloadSelectedPages(pages) {
   if (!pdfDocument || pages.length === 0 || isExporting) return;
+  const datePrefix = getLocalDatePrefix(new Date());
   const orderWidth = Math.max(2, String(pages.length).length);
   const exportCanvas = document.createElement("canvas");
   const context = exportCanvas.getContext("2d", { alpha: false });
@@ -709,7 +717,7 @@ async function downloadSelectedPages(pages) {
 
         const blob = await canvasToJpeg(exportCanvas);
         const orderPrefix = String(index + 1).padStart(orderWidth, "0");
-        objectUrl = downloadBlob(blob, `${orderPrefix}_paxina-${pageNumber}.jpg`);
+        objectUrl = downloadBlob(blob, `${datePrefix}_${orderPrefix}_paxina-${pageNumber}.jpg`);
         elements.prepareProgressBar.value = index + 1;
         setOptionalText(elements.prepareProgressText, `Gardada ${index + 1} de ${pages.length}`);
         await waitForDownload();
