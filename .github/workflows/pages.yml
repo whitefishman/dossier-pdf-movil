@@ -34,6 +34,16 @@ jobs:
           curl --fail --silent --show-error --location --output /dev/null \
             https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs
 
+      - name: Verificar la implementación de Preparar envío
+        run: |
+          grep -E '^import[[:space:]]+\{[[:space:]]*createPrepareSend[[:space:]]*\}[[:space:]]+from[[:space:]]+"\./prepare-send\.js(\?[^"[:space:]]*)?";' app.js
+          test -f prepare-send.js
+          test -f prepare-send.css
+          node --check app.js
+          node --check prepare-send.js
+          node --check service-worker.js
+          printf '{"commit":"%s","branch":"%s"}\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" > deployment-version.json
+
       - name: Preparar los archivos
         uses: actions/upload-pages-artifact@v3
         with:

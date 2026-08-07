@@ -11,7 +11,8 @@
     <link rel="icon" href="./icons/favicon-16x16.png" type="image/png" sizes="16x16" />
     <link rel="shortcut icon" href="./icons/favicon.ico" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=15" />
+    <link rel="stylesheet" href="./prepare-send.css?v=17" />
     <title>Dossier Xa!</title>
   </head>
   <body>
@@ -107,18 +108,18 @@
         </div>
       </section>
 
-      <section id="prepare-send" class="prepare-send" aria-labelledby="prepare-title" hidden>
-        <header class="prepare-header">
-          <h2 id="prepare-title">Preparar envío</h2>
+      <section id="send-review" class="send-review" aria-labelledby="send-review-title" hidden>
+        <header class="send-review__head">
+          <h2 id="send-review-title">Preparar envío</h2>
           <p>Revisa a orde, move ou elimina páxinas antes de descargar.</p>
         </header>
-        <div id="prepare-grid" class="prepare-grid" aria-live="polite"></div>
-        <div class="prepare-footer">
-          <div id="prepare-progress" class="export-progress" role="status" aria-live="polite" hidden>
-            <progress id="prepare-progress-bar" value="0" max="1"></progress>
-            <span id="prepare-progress-text">Preparando miniaturas…</span>
+        <div id="send-review-list" class="send-review__list" aria-live="polite"></div>
+        <div class="send-review__bottom">
+          <div id="send-review-progress" class="send-review__progress" role="status" aria-live="polite" hidden>
+            <progress id="send-review-progress-bar" value="0" max="1"></progress>
+            <span id="send-review-progress-text">Preparando miniaturas…</span>
           </div>
-          <div class="prepare-actions">
+          <div class="send-review__actions">
             <button id="back-to-reader" type="button">Volver</button>
             <button id="confirm-download" type="button">Descargar imaxes</button>
           </div>
@@ -146,11 +147,15 @@
           <div><dt>PDF.js</dt><dd id="diagnostic-pdfjs">Pendente</dd></div>
           <div><dt>getDocument()</dt><dd id="diagnostic-document">Non iniciado</dd></div>
           <div><dt>Páxinas</dt><dd id="diagnostic-pages">—</dd></div>
+          <div><dt>Miniaturas solicitadas</dt><dd id="diagnostic-previews-requested">0</dd></div>
+          <div><dt>Miniaturas completadas</dt><dd id="diagnostic-previews-completed">0</dd></div>
+          <div><dt>Miniaturas fallidas</dt><dd id="diagnostic-previews-failed">0</dd></div>
+          <div class="diagnostic-error"><dt>Último erro de miniatura</dt><dd><pre id="diagnostic-preview-error">Sen erros</pre></dd></div>
           <div class="diagnostic-error"><dt>Erro completo / stack trace</dt><dd><pre id="diagnostic-error">Sen erros</pre></dd></div>
         </dl>
       </aside>
     </main>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=18"></script>
   </body>
 </html>

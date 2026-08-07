@@ -1,3 +1,5 @@
+import { createPrepareSend } from "./prepare-send.js?v=17";
+
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
@@ -33,11 +35,11 @@ const elements = {
   exportProgress: document.querySelector("#export-progress"),
   exportProgressBar: document.querySelector("#export-progress-bar"),
   exportProgressText: document.querySelector("#export-progress-text"),
-  prepareSend: document.querySelector("#prepare-send"),
-  prepareGrid: document.querySelector("#prepare-grid"),
-  prepareProgress: document.querySelector("#prepare-progress"),
-  prepareProgressBar: document.querySelector("#prepare-progress-bar"),
-  prepareProgressText: document.querySelector("#prepare-progress-text"),
+  prepareSend: document.querySelector("#send-review"),
+  prepareGrid: document.querySelector("#send-review-list"),
+  prepareProgress: document.querySelector("#send-review-progress"),
+  prepareProgressBar: document.querySelector("#send-review-progress-bar"),
+  prepareProgressText: document.querySelector("#send-review-progress-text"),
   backToReader: document.querySelector("#back-to-reader"),
   confirmDownload: document.querySelector("#confirm-download"),
   sessionRestore: document.querySelector("#session-restore"),
@@ -51,6 +53,10 @@ const elements = {
   diagnosticDocument: document.querySelector("#diagnostic-document"),
   diagnosticPages: document.querySelector("#diagnostic-pages"),
   diagnosticError: document.querySelector("#diagnostic-error"),
+  diagnosticPreviewsRequested: document.querySelector("#diagnostic-previews-requested"),
+  diagnosticPreviewsCompleted: document.querySelector("#diagnostic-previews-completed"),
+  diagnosticPreviewsFailed: document.querySelector("#diagnostic-previews-failed"),
+  diagnosticPreviewError: document.querySelector("#diagnostic-preview-error"),
   diagnostics: document.querySelector("#diagnostics"),
   diagnosticsToggle: document.querySelector("#diagnostics-toggle"),
   clearCache: document.querySelector("#clear-cache"),
@@ -544,20 +550,15 @@ function getFeaturedOrdinal(position) {
   return ordinals[position - 1] || `${position}ª`;
 }
 
-function toggleFeaturedSelection() {
+function selectFeaturedAndContinue() {
   if (!pdfDocument || pendingSession || isExporting) return;
-  const featuredIndex = featuredPages.indexOf(currentPage);
-  if (featuredIndex >= 0) {
-    featuredPages.splice(featuredIndex, 1);
-    selectedPages.delete(currentPage);
-  } else {
-    featuredPages.push(currentPage);
-    selectedPages.delete(currentPage);
-    selectedPages = new Set([...featuredPages, ...selectedPages]);
-  }
+  if (selectedPages.has(currentPage)) return;
+  featuredPages.push(currentPage);
+  selectedPages = new Set([...featuredPages, ...selectedPages]);
   updateSelectionCount();
   updateSelectedState();
   saveCurrentSession();
+  if (currentPage < pdfDocument.numPages) changePage(1);
 }
 
 function updateSelectionCount() {
@@ -571,16 +572,14 @@ function updateSelectionCount() {
 
 function updateSelectedState() {
   const isSelected = selectedPages.has(currentPage);
-  const featuredIndex = featuredPages.indexOf(currentPage);
-  const isFeatured = featuredIndex >= 0;
   const selectedPosition = [...selectedPages].indexOf(currentPage) + 1;
   elements.wrap.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.classList.toggle("is-selected", isSelected);
   elements.selectAndContinue.setAttribute("aria-pressed", String(isSelected));
   elements.selectionActionLabel.textContent = isSelected ? "Deseleccionar e continuar" : "Seleccionar e continuar";
-  elements.selectFeatured.classList.toggle("is-featured", isFeatured);
-  elements.selectFeatured.setAttribute("aria-pressed", String(isFeatured));
-  elements.selectFeaturedLabel.textContent = isFeatured ? "Deseleccionar" : `Seleccionar como ${getFeaturedOrdinal(featuredPages.length + 1)}`;
+  elements.selectFeatured.hidden = isSelected;
+  elements.selectFeatured.setAttribute("aria-pressed", "false");
+  elements.selectFeaturedLabel.textContent = `Seleccionar como ${getFeaturedOrdinal(featuredPages.length + 1)}`;
   elements.selectionPositionStatus.textContent = isSelected ? `Seleccionada como ${selectedPosition}ª` : "";
   elements.selectionPositionStatus.hidden = !isSelected;
 }
@@ -855,20 +854,9 @@ function openPrepareSend() {
   observePreparedThumbnails();
 }
 
-function closePrepareSend() {
-  if (isExporting) return;
-  disposeThumbnails();
-  elements.prepareSend.hidden = true;
-  elements.reader.hidden = false;
-  elements.prepareProgress.hidden = true;
-  updateSelectionCount();
-  updateSelectedState();
-}
-
-async function downloadSelectedPages() {
-  if (!pdfDocument || preparedPages.length === 0 || isExporting) return;
-
-  const pages = [...preparedPages];
+async function downloadSelectedPages(pages) {
+  if (!pdfDocument || pages.length === 0 || isExporting) return;
+  const datePrefix = getLocalDatePrefix(new Date());
   const orderWidth = Math.max(2, String(pages.length).length);
   const exportCanvas = document.createElement("canvas");
   const context = exportCanvas.getContext("2d", { alpha: false });
@@ -880,9 +868,7 @@ async function downloadSelectedPages() {
   elements.prepareProgress.hidden = false;
   elements.prepareProgressBar.max = pages.length;
   elements.prepareProgressBar.value = 0;
-  elements.backToReader.disabled = true;
-  elements.confirmDownload.disabled = true;
-  updatePreparedNumbers();
+  prepareSendController.setExporting(true);
   updateControls();
 
   try {
@@ -909,7 +895,7 @@ async function downloadSelectedPages() {
 
         const blob = await canvasToJpeg(exportCanvas);
         const orderPrefix = String(index + 1).padStart(orderWidth, "0");
-        objectUrl = downloadBlob(blob, `${orderPrefix}_paxina-${pageNumber}.jpg`);
+        objectUrl = downloadBlob(blob, `${datePrefix}_${orderPrefix}_paxina-${pageNumber}.jpg`);
         elements.prepareProgressBar.value = index + 1;
         setOptionalText(elements.prepareProgressText, `Gardada ${index + 1} de ${pages.length}`);
         await waitForDownload();
@@ -929,9 +915,7 @@ async function downloadSelectedPages() {
     exportCanvas.width = 1;
     exportCanvas.height = 1;
     isExporting = false;
-    elements.backToReader.disabled = false;
-    elements.confirmDownload.disabled = preparedPages.length === 0;
-    updatePreparedNumbers();
+    prepareSendController.setExporting(false);
     updateControls();
   }
 }
@@ -955,7 +939,7 @@ function clearError() {
 async function closeDocument() {
   renderSequence++;
   resetZoom();
-  disposeThumbnails();
+  prepareSendController?.dispose();
   if (renderTask) {
     renderTask.cancel();
     renderTask = null;
@@ -988,6 +972,35 @@ async function returnHome() {
   elements.welcome.hidden = false;
 }
 
+prepareSendController = createPrepareSend({
+  screen: elements.prepareSend,
+  list: elements.prepareGrid,
+  progress: elements.prepareProgress,
+  progressBar: elements.prepareProgressBar,
+  progressText: elements.prepareProgressText,
+  backButton: elements.backToReader,
+  downloadButton: elements.confirmDownload,
+  renderPreview: renderSendPreview,
+  onPreviewError: reportDiagnosticError,
+  onPreviewStats: ({ requested, completed, failed, lastError }) => {
+    setOptionalText(elements.diagnosticPreviewsRequested, String(requested));
+    setOptionalText(elements.diagnosticPreviewsCompleted, String(completed));
+    setOptionalText(elements.diagnosticPreviewsFailed, String(failed));
+    setOptionalText(elements.diagnosticPreviewError, lastError);
+  },
+  onOrderChanged: (pages) => {
+    const featuredSet = new Set(featuredPages);
+    featuredPages = pages.filter((page) => featuredSet.has(page));
+    selectedPages = new Set(pages);
+    updateSelectionCount(); saveCurrentSession();
+  },
+  onBack: () => {
+    elements.reader.hidden = false;
+    updateSelectionCount(); updateSelectedState();
+  },
+  onDownload: downloadSelectedPages,
+});
+
 elements.fileInput.addEventListener("change", (event) => {
   setOptionalText(elements.diagnosticChange, `Disparado (${new Date().toLocaleTimeString("gl-ES")})`);
   const [file] = event.target.files;
@@ -996,11 +1009,10 @@ elements.fileInput.addEventListener("change", (event) => {
 });
 elements.close.addEventListener("click", returnHome);
 elements.selectAndContinue.addEventListener("click", selectAndContinue);
-elements.selectFeatured.addEventListener("click", toggleFeaturedSelection);
+elements.selectFeatured.addEventListener("click", selectFeaturedAndContinue);
 elements.continue.addEventListener("click", () => changePage(1));
 elements.downloadSelected?.addEventListener("click", openPrepareSend);
-elements.backToReader.addEventListener("click", closePrepareSend);
-elements.confirmDownload.addEventListener("click", downloadSelectedPages);
+
 elements.restoreSession?.addEventListener("click", restoreSavedSession);
 elements.discardSession?.addEventListener("click", startFreshSession);
 elements.diagnosticsToggle?.addEventListener("click", () => {
