@@ -3,8 +3,9 @@ import { createPrepareSend } from "./prepare-send.js?v=17";
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
-const THUMBNAIL_MAX_WIDTH = 240;
-const THUMBNAIL_MAX_HEIGHT = 340;
+const MAX_CONCURRENT_THUMBNAILS = 2;
+const THUMBNAIL_MAX_WIDTH = 160;
+const THUMBNAIL_MAX_HEIGHT = 220;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -92,7 +93,14 @@ let documentBaseName = "documento";
 let isExporting = false;
 let currentFileIdentity = null;
 let pendingSession = null;
-let prepareSendController = null;
+let preparedPages = [];
+let thumbnailSequence = 0;
+let thumbnailObserver = null;
+let thumbnailQueue = [];
+let thumbnailActiveCount = 0;
+const thumbnailQueuedPages = new Set();
+const thumbnailRenderTasks = new Map();
+const thumbnailUrls = new Map();
 
 async function loadPdfJs() {
   if (pdfjsLib) {
@@ -618,49 +626,30 @@ function waitForDownload() {
   return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
-function getLocalDatePrefix(date) {
-  const year = String(date.getFullYear()).padStart(4, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}${month}${day}`;
+function disposeThumbnails() {
+  thumbnailSequence++;
+  thumbnailObserver?.disconnect();
+  thumbnailObserver = null;
+  for (const task of thumbnailRenderTasks.values()) task.cancel();
+  thumbnailRenderTasks.clear();
+  thumbnailQueue = [];
+  thumbnailQueuedPages.clear();
+  thumbnailActiveCount = 0;
+  for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
+  thumbnailUrls.clear();
 }
 
-async function renderSendPreview(pageNumber, registerTask, isCancelled) {
-  await yieldToMainThread();
-  if (isCancelled()) return null;
-  if (!pdfDocument) throw new Error("Non hai ningún documento PDF dispoñible para renderizar a miniatura.");
-  const canvas = document.createElement("canvas");
-  let page = null;
-  try {
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error(`Non se puido crear o contexto 2D da miniatura da páxina ${pageNumber}.`);
-    if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
-      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
-      canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
-      canvas.height = Math.max(1, Math.floor(elements.canvas.height * scale));
-      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(elements.canvas, 0, 0, canvas.width, canvas.height);
-    } else {
-      page = await pdfDocument.getPage(pageNumber);
-      if (isCancelled()) return null;
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(1, THUMBNAIL_MAX_WIDTH / base.width, THUMBNAIL_MAX_HEIGHT / base.height) });
-      canvas.width = Math.max(1, Math.floor(viewport.width));
-      canvas.height = Math.max(1, Math.floor(viewport.height));
-      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
-      const task = page.render({ canvasContext: context, viewport });
-      registerTask(task);
-      await task.promise;
-    }
-    if (isCancelled()) return null;
-    const blob = await canvasToJpeg(canvas, 0.68);
-    if (!(blob instanceof Blob) || !blob.type.startsWith("image/") || blob.size === 0) {
-      throw new TypeError(`A conversión da páxina ${pageNumber} non produciu un Blob de imaxe válido.`);
-    }
-    return blob;
-  } finally {
-    page?.cleanup(); canvas.width = 1; canvas.height = 1;
-  }
+function cancelThumbnail(pageNumber) {
+  const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
+  if (item) thumbnailObserver?.unobserve(item);
+  thumbnailQueue = thumbnailQueue.filter((queuedPage) => queuedPage !== pageNumber);
+  thumbnailQueuedPages.delete(pageNumber);
+  thumbnailRenderTasks.get(pageNumber)?.cancel();
+  thumbnailRenderTasks.delete(pageNumber);
+  const url = thumbnailUrls.get(pageNumber);
+  if (url) URL.revokeObjectURL(url);
+  thumbnailUrls.delete(pageNumber);
+  updateThumbnailProgress();
 }
 
 function yieldToMainThread() {
@@ -668,12 +657,201 @@ function yieldToMainThread() {
   return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
+function updatePreparedNumbers(fromIndex = 0, toIndex = Infinity) {
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  items.forEach((item, index) => {
+    if (index < fromIndex || index > toIndex) return;
+    const position = item.querySelector(".prepare-number");
+    position.textContent = index + 1;
+    position.setAttribute("aria-label", `Posición de envío ${index + 1}`);
+    item.querySelector('[data-action="up"]').disabled = isExporting || index === 0;
+    item.querySelector('[data-action="down"]').disabled = isExporting || index === items.length - 1;
+    item.querySelector('[data-action="first"]').disabled = isExporting || index === 0;
+    item.querySelector('[data-action="remove"]').disabled = isExporting;
+  });
+}
+
+function syncPreparedOrder(fromIndex = 0, toIndex = Infinity) {
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  preparedPages = items.map((item) => Number(item.dataset.page));
+  const featuredSet = new Set(featuredPages);
+  featuredPages = preparedPages.filter((pageNumber) => featuredSet.has(pageNumber));
+  selectedPages = new Set(preparedPages);
+  updatePreparedNumbers(fromIndex, toIndex);
+  updateSelectionCount();
+  saveCurrentSession();
+  elements.confirmDownload.disabled = preparedPages.length === 0 || isExporting;
+}
+
+function movePreparedItem(item, action) {
+  if (isExporting) return;
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  const index = items.indexOf(item);
+  let nextIndex = index;
+  if (action === "up" && index > 0) {
+    elements.prepareGrid.insertBefore(item, items[index - 1]);
+    nextIndex = index - 1;
+  }
+  if (action === "down" && index < items.length - 1) {
+    items[index + 1].after(item);
+    nextIndex = index + 1;
+  }
+  if (action === "first" && index > 0) {
+    elements.prepareGrid.prepend(item);
+    nextIndex = 0;
+  }
+  syncPreparedOrder(Math.min(index, nextIndex), Math.max(index, nextIndex));
+}
+
+function createPreparedItem(pageNumber, index) {
+  const item = document.createElement("article");
+  item.className = "prepare-item";
+  item.dataset.page = pageNumber;
+  item.innerHTML = `
+    <div class="prepare-preview">
+      <span class="prepare-number">${index + 1}</span>
+      <span class="prepare-placeholder">Preparando…</span>
+      <span class="prepare-page-label">Páxina ${pageNumber}</span>
+    </div>
+    <div class="prepare-item-controls">
+      <button type="button" data-action="up">Subir</button>
+      <button type="button" data-action="down">Baixar</button>
+      <button type="button" data-action="first">Primeira</button>
+      <button type="button" data-action="remove">Eliminar</button>
+    </div>
+  `;
+  item.querySelector(".prepare-item-controls").addEventListener("click", (event) => {
+    const action = event.target.dataset.action;
+    if (!action || isExporting) return;
+    if (action !== "remove") {
+      movePreparedItem(item, action);
+      return;
+    }
+    const removedIndex = [...elements.prepareGrid.querySelectorAll(".prepare-item")].indexOf(item);
+    cancelThumbnail(pageNumber);
+    item.remove();
+    syncPreparedOrder(Math.max(0, removedIndex - 1));
+    if (preparedPages.length === 0) elements.prepareGrid.innerHTML = '<p class="prepare-empty">Non hai páxinas seleccionadas.</p>';
+  });
+  return item;
+}
+
+function updateThumbnailProgress() {
+  const isBusy = thumbnailActiveCount > 0 || thumbnailQueue.length > 0;
+  elements.prepareProgress.hidden = !isBusy;
+  elements.prepareProgressBar.max = Math.max(1, preparedPages.length);
+  elements.prepareProgressBar.value = thumbnailUrls.size;
+  if (isBusy) setOptionalText(elements.prepareProgressText, "Cargando miniaturas visibles…");
+}
+
+async function renderPreparedThumbnail(pageNumber, sequence) {
+  let page = null;
+  let task = null;
+  const canvas = document.createElement("canvas");
+  try {
+    await yieldToMainThread();
+    if (sequence !== thumbnailSequence || !preparedPages.includes(pageNumber)) return;
+    const context = canvas.getContext("2d", { alpha: false });
+    if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
+      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
+      canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
+      canvas.height = Math.max(1, Math.floor(elements.canvas.height * scale));
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(elements.canvas, 0, 0, canvas.width, canvas.height);
+    } else {
+      page = await pdfDocument.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / baseViewport.width, THUMBNAIL_MAX_HEIGHT / baseViewport.height);
+      const viewport = page.getViewport({ scale });
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      task = page.render({ canvasContext: context, viewport });
+      thumbnailRenderTasks.set(pageNumber, task);
+      await task.promise;
+    }
+    const blob = await canvasToJpeg(canvas, 0.7);
+    if (sequence !== thumbnailSequence || !preparedPages.includes(pageNumber)) return;
+    const url = URL.createObjectURL(blob);
+    thumbnailUrls.set(pageNumber, url);
+    const item = elements.prepareGrid.querySelector(`[data-page="${pageNumber}"]`);
+    if (item) {
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = `Páxina ${pageNumber}`;
+      item.querySelector(".prepare-placeholder")?.replaceWith(image);
+      thumbnailObserver?.unobserve(item);
+    }
+  } catch (error) {
+    if (error?.name !== "RenderingCancelledException") {
+      console.error(error);
+      reportDiagnosticError(error);
+      setOptionalText(elements.prepareProgressText, "Non se puido cargar unha miniatura.");
+    }
+  } finally {
+    if (thumbnailRenderTasks.get(pageNumber) === task) thumbnailRenderTasks.delete(pageNumber);
+    page?.cleanup();
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+}
+
+function processThumbnailQueue(sequence) {
+  while (sequence === thumbnailSequence && thumbnailActiveCount < MAX_CONCURRENT_THUMBNAILS && thumbnailQueue.length > 0) {
+    const pageNumber = thumbnailQueue.shift();
+    thumbnailQueuedPages.delete(pageNumber);
+    if (thumbnailUrls.has(pageNumber) || !preparedPages.includes(pageNumber)) continue;
+    thumbnailActiveCount++;
+    renderPreparedThumbnail(pageNumber, sequence).finally(() => {
+      if (sequence !== thumbnailSequence) return;
+      thumbnailActiveCount--;
+      updateThumbnailProgress();
+      processThumbnailQueue(sequence);
+    });
+  }
+  updateThumbnailProgress();
+}
+
+function enqueueThumbnail(pageNumber, sequence) {
+  if (sequence !== thumbnailSequence || thumbnailUrls.has(pageNumber) || thumbnailQueuedPages.has(pageNumber) || thumbnailRenderTasks.has(pageNumber)) return;
+  thumbnailQueuedPages.add(pageNumber);
+  thumbnailQueue.push(pageNumber);
+  processThumbnailQueue(sequence);
+}
+
+function observePreparedThumbnails() {
+  const sequence = ++thumbnailSequence;
+  const items = [...elements.prepareGrid.querySelectorAll(".prepare-item")];
+  if (!("IntersectionObserver" in window)) {
+    items.slice(0, 8).forEach((item) => enqueueThumbnail(Number(item.dataset.page), sequence));
+    return;
+  }
+  thumbnailObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) enqueueThumbnail(Number(entry.target.dataset.page), sequence);
+    }
+  }, { root: elements.prepareGrid, rootMargin: "300px 0px", threshold: 0.01 });
+  items.forEach((item) => thumbnailObserver.observe(item));
+}
+
 function openPrepareSend() {
   if (!pdfDocument || selectedPages.size === 0 || isExporting) return;
-  preloadTask?.cancel(); preloadTask = null;
+  disposeThumbnails();
+  if (preloadTask) {
+    preloadTask.cancel();
+    preloadTask = null;
+  }
   clearAdjacentPageCache();
+  preparedPages = [...selectedPages];
+  elements.prepareGrid.replaceChildren(...preparedPages.map(createPreparedItem));
+  updatePreparedNumbers();
+  elements.prepareProgress.hidden = true;
+  elements.confirmDownload.disabled = false;
   elements.reader.hidden = true;
-  prepareSendController.open([...selectedPages]);
+  elements.prepareSend.hidden = false;
+  observePreparedThumbnails();
 }
 
 async function downloadSelectedPages(pages) {
