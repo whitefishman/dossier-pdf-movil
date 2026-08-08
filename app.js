@@ -1,11 +1,13 @@
-import { createPrepareSend } from "./prepare-send.js?v=17";
+import { createPrepareSend } from "./prepare-send.js?v=20";
 import { bindDownloadSelected } from "./download-selected.js?v=19";
 
 const PDFJS_VERSION = "4.10.38";
 const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
-const THUMBNAIL_MAX_WIDTH = 160;
-const THUMBNAIL_MAX_HEIGHT = 220;
+// Intermediate resolution: legible in the two-column review without paying the
+// memory and rendering cost of the full-resolution download image.
+const THUMBNAIL_MAX_WIDTH = 640;
+const THUMBNAIL_MAX_HEIGHT = 900;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
@@ -658,7 +660,7 @@ async function renderSendPreview(pageNumber, registerTask, isCancelled) {
       await task.promise;
     }
     if (isCancelled()) return null;
-    const blob = await canvasToJpeg(canvas, 0.68);
+    const blob = await canvasToJpeg(canvas, 0.86);
     if (!(blob instanceof Blob) || !blob.type.startsWith("image/") || blob.size === 0) {
       throw new TypeError(`A conversión da páxina ${pageNumber} non produciu un Blob de imaxe válido.`);
     }
