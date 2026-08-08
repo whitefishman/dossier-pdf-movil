@@ -93,6 +93,7 @@ let documentBaseName = "documento";
 let isExporting = false;
 let currentFileIdentity = null;
 let pendingSession = null;
+let prepareSendController = null;
 let preparedPages = [];
 let thumbnailSequence = 0;
 let thumbnailObserver = null;
@@ -624,6 +625,57 @@ function downloadBlob(blob, fileName) {
 
 function waitForDownload() {
   return new Promise((resolve) => setTimeout(resolve, 150));
+}
+
+function getLocalDatePrefix(date) {
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+async function renderSendPreview(pageNumber, registerTask, isCancelled) {
+  await yieldToMainThread();
+  if (isCancelled()) return null;
+  if (!pdfDocument) throw new Error("Non hai ningún documento PDF dispoñible para renderizar a miniatura.");
+  const canvas = document.createElement("canvas");
+  let page = null;
+  try {
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error(`Non se puido crear o contexto 2D da miniatura da páxina ${pageNumber}.`);
+    if (pageNumber === renderedPageNumber && elements.canvas.width > 1) {
+      const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / elements.canvas.width, THUMBNAIL_MAX_HEIGHT / elements.canvas.height);
+      canvas.width = Math.max(1, Math.floor(elements.canvas.width * scale));
+      canvas.height = Math.max(1, Math.floor(elements.canvas.height * scale));
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(elements.canvas, 0, 0, canvas.width, canvas.height);
+    } else {
+      page = await pdfDocument.getPage(pageNumber);
+      if (isCancelled()) return null;
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({
+        scale: Math.min(1, THUMBNAIL_MAX_WIDTH / base.width, THUMBNAIL_MAX_HEIGHT / base.height),
+      });
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const task = page.render({ canvasContext: context, viewport });
+      registerTask(task);
+      await task.promise;
+    }
+    if (isCancelled()) return null;
+    const blob = await canvasToJpeg(canvas, 0.68);
+    if (!(blob instanceof Blob) || !blob.type.startsWith("image/") || blob.size === 0) {
+      throw new TypeError(`A conversión da páxina ${pageNumber} non produciu un Blob de imaxe válido.`);
+    }
+    return blob;
+  } finally {
+    page?.cleanup();
+    canvas.width = 1;
+    canvas.height = 1;
+  }
 }
 
 function disposeThumbnails() {
