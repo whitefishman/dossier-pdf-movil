@@ -14,14 +14,9 @@ export function createPrepareSend(options) {
   const previewStats = { requested: 0, completed: 0, failed: 0, lastError: "Sen erros" };
   const editor = document.createElement("dialog");
   editor.className = "send-page-editor";
-  editor.innerHTML = `<header class="send-page-editor__head"><strong class="send-page-editor__title"></strong><button class="send-page-editor__close" type="button" aria-label="Cerrar editor">×</button></header>
+  editor.innerHTML = `<header class="send-page-editor__head"><strong class="send-page-editor__title"></strong><button class="send-page-editor__close" type="button" aria-label="Pechar vista ampliada">×</button></header>
     <div class="send-page-editor__page"><span class="send-page-editor__loading">Cargando página…</span><img class="send-page-editor__image" alt=""></div>
-    <div class="send-page-editor__actions" aria-label="Acciones de la página">
-      <button type="button" data-command="up">⬆️ <span>Subir una posición</span></button>
-      <button type="button" data-command="down">⬇️ <span>Bajar una posición</span></button>
-      <button type="button" data-command="first">⭐ <span>Enviar primero</span></button>
-      <button type="button" data-command="remove">🗑 <span>Eliminar del envío</span></button>
-    </div>`;
+    <p class="send-page-editor__hint">Toca × para volver á orde do envío</p>`;
   screen.append(editor);
   const editorImage = editor.querySelector(".send-page-editor__image");
   const editorLoading = editor.querySelector(".send-page-editor__loading");
@@ -44,23 +39,11 @@ export function createPrepareSend(options) {
     editorImage.hidden = !url;
     editorLoading.hidden = Boolean(url);
     if (url) editorImage.src = url;
-    const index = cards().indexOf(card);
-    editor.querySelector('[data-command="up"]').disabled = index === 0;
-    editor.querySelector('[data-command="first"]').disabled = index === 0;
-    editor.querySelector('[data-command="down"]').disabled = index === pages.length - 1;
     editor.showModal();
   }
 
   editor.querySelector(".send-page-editor__close").addEventListener("click", closeEditor);
   editor.addEventListener("cancel", (event) => { event.preventDefault(); closeEditor(); });
-  editor.querySelector(".send-page-editor__actions").addEventListener("click", (event) => {
-    const action = event.target.closest("button")?.dataset.command;
-    const card = list.querySelector(`.send-sheet[data-page="${editingPage}"]`);
-    if (!action || !card) return;
-    closeEditor();
-    command(card, action);
-  });
-
   function reportStats() { options.onPreviewStats?.({ ...previewStats }); }
 
   function cards() { return [...list.querySelectorAll(".send-sheet")]; }
@@ -78,6 +61,10 @@ export function createPrepareSend(options) {
     allCards.forEach((card, index) => {
       if (index < from || index > to) return;
       card.querySelector(".send-sheet__position").textContent = String(index + 1);
+      card.querySelector('[data-command="up"]').disabled = exporting || index === 0;
+      card.querySelector('[data-command="first"]').disabled = exporting || index === 0;
+      card.querySelector('[data-command="down"]').disabled = exporting || index === allCards.length - 1;
+      card.querySelector('[data-command="remove"]').disabled = exporting;
     });
     downloadButton.disabled = exporting || pages.length === 0;
   }
@@ -154,11 +141,21 @@ export function createPrepareSend(options) {
     const card = document.createElement("article");
     card.className = "send-sheet";
     card.dataset.page = page;
-    card.innerHTML = `<button class="send-sheet__open" type="button" aria-label="Editar página ${page}">
+    card.innerHTML = `<button class="send-sheet__open" type="button" aria-label="Ampliar páxina ${page}">
       <span class="send-sheet__preview"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></span>
-      <span class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span class="send-sheet__order-label">ª en el envío</span></strong><span>Página ${page}</span></span>
-    </button>`;
+      <span class="send-sheet__zoom-hint" aria-hidden="true">Ampliar</span>
+    </button>
+    <div class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span aria-hidden="true"> · </span><span>Páxina ${page}</span></strong></div>
+    <div class="send-sheet__controls" aria-label="Controis da páxina ${page}">
+      <button type="button" data-command="up"><span aria-hidden="true">↑</span> Subir</button>
+      <button type="button" data-command="down"><span aria-hidden="true">↓</span> Baixar</button>
+      <button type="button" data-command="first"><span aria-hidden="true">⇈</span> Primeira</button>
+      <button type="button" data-command="remove">Eliminar</button>
+    </div>`;
     card.querySelector(".send-sheet__open").addEventListener("click", () => openEditor(page));
+    card.querySelector(".send-sheet__controls").addEventListener("click", (event) => {
+      command(card, event.target.closest("button")?.dataset.command);
+    });
     return card;
   }
 
