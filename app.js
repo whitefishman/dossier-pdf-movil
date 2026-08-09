@@ -1,4 +1,4 @@
-import { createPrepareSend } from "./prepare-send.js?v=20";
+import { createPrepareSend } from "./prepare-send.js?v=21";
 import { bindDownloadSelected } from "./download-selected.js?v=19";
 
 const PDFJS_VERSION = "4.10.38";
