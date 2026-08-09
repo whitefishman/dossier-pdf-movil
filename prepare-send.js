@@ -1,5 +1,26 @@
 const MAX_PARALLEL_PREVIEWS = 2;
 
+export function reorderPages(currentPages, page, action) {
+  const pages = [...currentPages];
+  const index = pages.indexOf(page);
+  if (index === -1) return pages;
+
+  if (action === "remove") {
+    pages.splice(index, 1);
+    return pages;
+  }
+
+  let destination = index;
+  if (action === "up" && index > 0) destination = index - 1;
+  else if (action === "down" && index < pages.length - 1) destination = index + 1;
+  else if (action === "first" && index > 0) destination = 0;
+  else return pages;
+
+  pages.splice(index, 1);
+  pages.splice(destination, 0, page);
+  return pages;
+}
+
 export function createPrepareSend(options) {
   const { screen, list, progress, progressBar, progressText, backButton, downloadButton } = options;
   let pages = [];
@@ -163,16 +184,23 @@ export function createPrepareSend(options) {
     if (!action || exporting) return;
     const allCards = cards();
     const index = allCards.indexOf(card);
-    let next = index;
-    if (action === "up" && index > 0) { list.insertBefore(card, allCards[index - 1]); next--; }
-    else if (action === "down" && index < allCards.length - 1) { allCards[index + 1].after(card); next++; }
-    else if (action === "first" && index > 0) { list.prepend(card); next = 0; }
-    else if (action === "remove") {
-      const page = Number(card.dataset.page); cancelPage(page); card.remove();
+    const page = Number(card.dataset.page);
+    const nextPages = reorderPages(pages, page, action);
+    const next = nextPages.indexOf(page);
+    if (nextPages.length === pages.length && next === index) return;
+
+    if (action === "remove") {
+      cancelPage(page); card.remove();
       syncOrder(Math.max(0, index - 1));
       if (!pages.length) list.innerHTML = '<p class="send-review__empty">Non hai páxinas seleccionadas.</p>';
       return;
-    } else return;
+    }
+
+    // Move the existing card: its already generated image and object URL remain
+    // intact, so changing the order never schedules or renders another preview.
+    if (next === 0) list.prepend(card);
+    else if (next < index) list.insertBefore(card, allCards[next]);
+    else allCards[next].after(card);
     syncOrder(Math.min(index, next), Math.max(index, next));
   }
 
