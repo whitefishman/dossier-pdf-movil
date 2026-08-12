@@ -162,11 +162,10 @@ export function createPrepareSend(options) {
     const card = document.createElement("article");
     card.className = "send-sheet";
     card.dataset.page = page;
-    card.innerHTML = `<button class="send-sheet__open" type="button" aria-label="Ampliar páxina ${page}">
+    card.innerHTML = `<header class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span aria-hidden="true"> · </span><span>Páxina ${page}</span></strong></header>
+    <button class="send-sheet__open" type="button" aria-label="Ampliar páxina ${page}">
       <span class="send-sheet__preview"><span class="send-sheet__loading" role="status"><i></i>Cargando…</span></span>
-      <span class="send-sheet__zoom-hint" aria-hidden="true">Ampliar</span>
     </button>
-    <div class="send-sheet__caption"><strong><span class="send-sheet__position">${index + 1}</span><span aria-hidden="true"> · </span><span>Páxina ${page}</span></strong></div>
     <div class="send-sheet__controls" aria-label="Controis da páxina ${page}">
       <button type="button" data-command="up"><span aria-hidden="true">↑</span> Subir</button>
       <button type="button" data-command="down"><span aria-hidden="true">↓</span> Baixar</button>
