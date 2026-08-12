@@ -6,8 +6,8 @@ const PDFJS_BASE_URL = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}
 const SESSION_STORAGE_KEY = "dossier-pdf-last-session";
 // Intermediate resolution: legible in the two-column review without paying the
 // memory and rendering cost of the full-resolution download image.
-const THUMBNAIL_MAX_WIDTH = 640;
-const THUMBNAIL_MAX_HEIGHT = 900;
+const THUMBNAIL_MAX_WIDTH = 900;
+const THUMBNAIL_MAX_HEIGHT = 1260;
 
 let pdfjsLib = null;
 let pdfJsLoadPromise = null;
