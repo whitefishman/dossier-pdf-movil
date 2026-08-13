@@ -1,29 +1,55 @@
-# Dossier PDF
+# Dossier Xa!
 
-Una PWA móvil, sin frameworks, para abrir y leer archivos PDF página a página.
+Aplicación web estable, pensada para móbil, que permite abrir un PDF no propio
+dispositivo, escoller as páxinas útiles e descargalas como imaxes JPG. O arquivo
+non se envía a ningún servidor.
 
-## Ejecutar en local
+## Uso en móbil
 
-Los módulos de PDF.js y el *service worker* necesitan un servidor HTTP:
+1. Preme **Abrir PDF** e escolle un documento.
+2. Revisa as páxinas avanzando co xesto horizontal ou cos botóns. Usa
+   **Seleccionar e continuar** para marcar unha páxina, ou **Seleccionar como
+   primeira** para colocala ao inicio do envío.
+3. Preme **Descargar imaxes** para abrir **Preparar envío**. Nesa pantalla podes
+   reordenar as seleccionadas, movelas ao principio ou ao final e eliminar as
+   que non necesites.
+4. Confirma a descarga. Cada páxina expórtase en JPG co nome
+   `AAAAMMDD_XX_paxina-X.jpg`: data, posición na orde final e número de páxina
+   orixinal.
+
+A aplicación garda localmente a páxina actual, a selección e a súa orde. Ao
+volver abrir o mesmo PDF ofrece **Restaurar sesión** ou empezar de novo; o PDF
+en si non queda gardado.
+
+## Instalar como PWA
+
+Abre a aplicación nun navegador compatible e usa **Instalar aplicación** ou
+**Engadir á pantalla de inicio** no menú do navegador. A interface instalada
+pode abrirse sen conexión; para cargar un documento só tes que seleccionalo
+desde o dispositivo.
+
+## Diagnóstico
+
+O botón **🐞 Diagnóstico** mostra información do arquivo, carga de PDF.js,
+renderizado de miniaturas e erros. **Borrar caché e recargar** permite resolver
+problemas despois dunha actualización.
+
+## Desenvolvemento e despregamento
+
+É unha aplicación estática sen compilación. Para probala en local (PDF.js e o
+*service worker* requiren HTTP):
 
 ```bash
 python3 -m http.server 8080
 ```
 
-Después abre `http://localhost:8080` en el navegador.
+Abre `http://localhost:8080`. As probas unitarias execútanse con:
 
-## GitHub Pages
+```bash
+node --test
+```
 
-El proyecto usa rutas relativas y no requiere compilación. Con GitHub Pages
-configurado para usar **GitHub Actions**, el workflow `.github/workflows/pages.yml`
-publica automáticamente la raíz del repositorio al recibir cambios en `main`.
-También se puede ejecutar manualmente desde la pestaña **Actions**. La aplicación
-queda disponible en `https://whitefishman.github.io/dossier-pdf-movil/`.
-
-## Características
-
-- Selección local y privada de documentos PDF.
-- Renderizado página a página con PDF.js.
-- Selección de páginas con avance automático y contador de páginas marcadas.
-- Navegación táctil horizontal y mediante la acción «Continuar».
-- Aplicación instalable con manifiesto y funcionamiento sin conexión de la interfaz.
+O workflow `.github/workflows/pages.yml` publica a raíz do repositorio en
+GitHub Pages en cada cambio de `main`, ou manualmente desde **Actions**. Require
+configurar Pages coa orixe **GitHub Actions**. A versión pública está en
+<https://whitefishman.github.io/dossier-pdf-movil/>.
